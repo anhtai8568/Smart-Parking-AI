@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ParkVision AI - Camera Test</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #f4f4f9; }
+        .container { margin-top: 50px; }
+        video { border: 5px solid #333; border-radius: 10px; width: 640px; background: #000; }
+        #result { margin-top: 20px; font-size: 24px; font-weight: bold; color: #2ecc71; }
+        .status { color: #666; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 ParkVision AI: Camera Real-time Test</h1>
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="canvas" style="display:none;"></canvas>
+        <div id="result">Đang chờ nhận diện...</div>
+        <p class="status" id="status">Trạng thái: Đang khởi động camera...</p>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const resultDiv = document.getElementById('result');
+        const statusP = document.getElementById('status');
+
+        // 1. Truy cập Webcam laptop
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                statusP.innerText = "Trạng thái: Camera đã sẵn sàng. Đang quét tự động (1.5s/lần)...";
+                // Bắt đầu vòng lặp quét tự động
+                setInterval(captureAndScan, 1500);
+            } catch (err) {
+                statusP.innerText = "Lỗi: Không thể truy cập Webcam!";
+                console.error(err);
+            }
+        }
+
+        // 2. Chụp ảnh từ Video và gửi lên FastAPI
+        async function captureAndScan() {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+
+            // Chuyển ảnh sang định dạng Blob (File) để gửi API
+            canvas.toBlob(async (blob) => {
+                const formData = new FormData();
+                formData.append('file', blob, 'webcam.jpg');
+
+                try {
+                    const response = await fetch('http://localhost:8000/api/scan-plate', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const result = await response.json();
+
+                    if (result.status === "success") {
+                        resultDiv.innerText = "Biển số: " + result.data.plate_number;
+                        resultDiv.style.color = "#2ecc71";
+                    } else {
+                        resultDiv.innerText = "Không tìm thấy biển số";
+                        resultDiv.style.color = "#e74c3c";
+                    }
+                } catch (error) {
+                    console.error("Lỗi kết nối API:", error);
+                }
+            }, 'image/jpeg');
+        }
+
+        setupCamera();
+    </script>
+</body>
+</html>

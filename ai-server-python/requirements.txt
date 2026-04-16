@@ -1,6 +1,0 @@
-fastapi
-uvicorn
-ultralytics
-opencv-contrib-python
-easyocr
-python-multipart
