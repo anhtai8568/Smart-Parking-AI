@@ -1,0 +1,12 @@
+
+// ESP32
+// HC SR04 (kích hoạt ngoài barrier)
+Trig1: D19
+Echo1: D18
+
+// US 015 (kích hoạt trong barrier)
+Trig2: D5
+Echo2: D17
+
+// Servo MG90s
+Servo: D21
