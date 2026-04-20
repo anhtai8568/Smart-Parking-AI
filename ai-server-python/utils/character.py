@@ -63,12 +63,19 @@ class CharacterRecognizer:
             
             # XỬ LÝ HÀNG TRÊN: Vị trí thứ 3 (index 2) luôn là CHỮ (VD: 30A, 29A1)
             text_row1 = ""
+
             for i, c in enumerate(row1):
-                if i == 2:
-                    text_row1 += self.char_map.get(c['name'], c['name']) # Ép ra CHỮ
+                name = c['name']
+                
+                if i < 2:
+                    # 2 ký tự đầu luôn là số (tỉnh)
+                    text_row1 += self.num_map.get(name, name)
                 else:
-                    text_row1 += self.num_map.get(c['name'], c['name'])  # Ép ra SỐ
-            
+                    # Phần sau: linh hoạt chữ hoặc số
+                    if name.isalpha():
+                        text_row1 += self.char_map.get(name, name)
+                    else:
+                        text_row1 += self.num_map.get(name, name)
             # XỬ LÝ HÀNG DƯỚI: 100% luôn là SỐ
             text_row2 = "".join([self.num_map.get(c['name'], c['name']) for c in row2])
             

@@ -9,4 +9,13 @@ Trig2: D5
 Echo2: D17
 
 // Servo MG90s
-Servo: D21
+Servo: D21  
+
+// dò line 1
+OUT1: D35
+OUT3: D32
+OUT5: D33
+
+
+
+
