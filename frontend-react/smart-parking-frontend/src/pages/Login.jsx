@@ -1,31 +1,50 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { loginWithMockAccount } from '../data/mockAuth'
+import api from '../services/api'
 
 function Login() {
   const navigate = useNavigate()
   const [error, setError] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault()
 
     const username = e.target.username.value.trim()
     const password = e.target.password.value.trim()
 
-    const result = loginWithMockAccount(username, password)
-
-    if (!result) {
-      setError('Sai tài khoản hoặc mật khẩu')
+    if (!username || !password) {
+      setError('Vui lòng nhập đầy đủ tài khoản và mật khẩu')
       return
     }
 
-    localStorage.setItem('token', result.token)
-    localStorage.setItem('currentUser', JSON.stringify(result.user))
+    try {
+      setIsLoading(true)
+      setError('')
 
-    if (result.user.role === 'admin') {
-      navigate('/admin/dashboard')
-    } else {
-      navigate('/user/dashboard')
+      const response = await api.post('/api/auth/login', { username, password })
+      const result = response.data?.data
+
+      if (!result?.token || !result?.user) {
+        setError('Phản hồi đăng nhập không hợp lệ')
+        return
+      }
+
+      localStorage.setItem('token', result.token)
+      localStorage.setItem('currentUser', JSON.stringify(result.user))
+
+      if (result.user.role === 'admin') {
+        navigate('/admin/dashboard')
+      } else {
+        navigate('/user/dashboard')
+      }
+    } catch (requestError) {
+      const message =
+        requestError?.response?.data?.message ||
+        'Đăng nhập thất bại. Kiểm tra backend và thử lại.'
+      setError(message)
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -70,8 +89,8 @@ function Login() {
 
           {error && <div className="error-box">{error}</div>}
 
-          <button className="primary-btn login-btn" type="submit">
-            Đăng nhập
+          <button className="primary-btn login-btn" type="submit" disabled={isLoading}>
+            {isLoading ? 'Đang đăng nhập...' : 'Đăng nhập'}
           </button>
         </div>
 

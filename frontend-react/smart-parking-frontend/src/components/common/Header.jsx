@@ -1,6 +1,27 @@
+import { useEffect, useState } from 'react'
+import api from '../../services/api'
+
 function Header({ title }) {
   const rawUser = localStorage.getItem('currentUser')
-  const currentUser = rawUser ? JSON.parse(rawUser) : null
+  const initialUser = rawUser ? JSON.parse(rawUser) : null
+  const [currentUser, setCurrentUser] = useState(initialUser)
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const response = await api.get('/api/auth/me')
+        const user = response.data?.data?.user
+        if (user) {
+          setCurrentUser(user)
+          localStorage.setItem('currentUser', JSON.stringify(user))
+        }
+      } catch (_error) {
+        // Keep localStorage fallback if backend is unavailable.
+      }
+    }
+
+    fetchProfile()
+  }, [])
 
   return (
     <header className="header">
