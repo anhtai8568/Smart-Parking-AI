@@ -28,9 +28,11 @@ function DashboardAdmin() {
             </div>
           </div>
           <div className="camera-box">
-            Mô phỏng khung camera
-            <br />
-            AI nhận diện biển số / QR / RFID
+            <img
+              className="camera-stream"
+              src="http://localhost:8000/api/video-stream"
+              alt="Luồng camera AI"
+            />
           </div>
         </div>
 

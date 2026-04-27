@@ -1,5 +1,5 @@
 
-// ESP32
+// ESP32 (toàn bộ khối cảm biến ở cổng)
 // HC SR04 (kích hoạt ngoài barrier)
 Trig1: D19
 Echo1: D18
@@ -11,10 +11,15 @@ Echo2: D17
 // Servo MG90s
 Servo: D21  
 
-// dò line 1
-OUT1: D35
-OUT3: D32
-OUT5: D33
+// Thẻ RFID
+SDA: D26
+SCK: D14
+MOSI: D13
+MISO: D12   
+RST: D27 
+
+
+
 
 
 
