@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="vi" class="h-full">
+ <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Parking AI Pro</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.263.0/dist/umd/lucide.min.js"></script>
+  <script src="/_sdk/element_sdk.js"></script>
+  <script src="/_sdk/data_sdk.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet">
+  <style>
+* { font-family: 'Outfit', sans-serif; }
+html, body { height: 100%; margin: 0; }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: .6; }
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes alert-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+.anim-fade { animation: fadeUp .5s ease both; }
+.anim-slide { animation: slideIn .4s ease both; }
+.anim-d1 { animation-delay: .05s; }
+.anim-d2 { animation-delay: .1s; }
+.anim-d3 { animation-delay: .15s; }
+.anim-d4 { animation-delay: .2s; }
+.anim-d5 { animation-delay: .25s; }
+.anim-d6 { animation-delay: .3s; }
+.pulse-dot { animation: pulse-dot 2s ease infinite; }
+.alert-pulse { animation: alert-pulse 1.5s ease infinite; }
+
+.slot-card { transition: all .2s ease; }
+.slot-card:hover { transform: translateY(-2px); }
+
+.glass-card {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(12px);
+}
+
+.camera-frame {
+  background: linear-gradient(135deg, rgba(16,185,129,0.1) 0%, rgba(99,102,241,0.1) 100%);
+  border: 2px solid rgba(16,185,129,0.3);
+  position: relative;
+  overflow: hidden;
+}
+
+.camera-frame::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: 
+    linear-gradient(90deg, transparent 0%, rgba(16,185,129,0.1) 50%, transparent 100%);
+  animation: scan 3s infinite;
+  pointer-events: none;
+}
+
+@keyframes scan {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(100%); }
+}
+
+.barrier-btn {
+  position: relative;
+  overflow: hidden;
+  transition: all .3s ease;
+}
+
+.barrier-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: rgba(255,255,255,0.1);
+  transition: left .3s ease;
+}
+
+.barrier-btn:hover::before { left: 100%; }
+
+.alert-box {
+  animation: slideIn .3s ease;
+  border-left: 4px solid;
+}
+
+.alert-critical { border-left-color: #ef4444; background: rgba(239,68,68,0.1); }
+.alert-warning { border-left-color: #f59e0b; background: rgba(245,158,11,0.1); }
+.alert-info { border-left-color: #3b82f6; background: rgba(59,130,246,0.1); }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 3px; }
+
+.tab-btn { transition: all .2s ease; }
+.tab-btn.active { background: #10b981; color: #fff; }
+</style>
+  <script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        bg: '#0c0f1a',
+        surface: '#151929',
+        accent: '#10b981',
+        accentAlt: '#6366f1',
+        txt: '#e2e8f0'
+      }
+    }
+  }
+}
+</script>
+  <style>body { box-sizing: border-box; }</style>
+ </head>
+ <body class="h-full bg-bg text-txt overflow-auto">
+  <div id="app" class="h-full w-full flex flex-col"><!-- Header -->
+   <header class="flex items-center justify-between px-5 py-4 border-b border-white/5 anim-fade">
+    <div class="flex items-center gap-3">
+     <div class="w-10 h-10 rounded-xl bg-accent/20 flex items-center justify-center"><i data-lucide="car" class="w-5 h-5 text-accent"></i>
+     </div>
+     <div>
+      <h1 id="el-title" class="text-lg font-bold tracking-tight">Smart Parking AI Pro</h1>
+      <p class="text-xs text-white/40">Hệ thống quản lý bãi đỗ xe thông minh với nhận diện AI</p>
+     </div>
+    </div>
+    <div class="flex items-center gap-3">
+     <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-accent/10 text-accent text-xs font-medium"><span class="w-2 h-2 rounded-full bg-accent pulse-dot inline-block"></span> Hệ thống hoạt động
+     </div><span id="el-clock" class="text-xs text-white/40 font-mono"></span>
+    </div>
+   </header>
+   <div class="flex-1 overflow-auto p-4 sm:p-5"><!-- Main Grid Layout -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 h-full">
+     <!-- Left Side: Camera & Vehicle Info -->
+     <div class="lg:col-span-2 space-y-4">
+      <!-- Camera Stream Section -->
+      <div class="glass-card rounded-2xl overflow-hidden anim-fade anim-d1">
+       <div class="p-4 border-b border-white/5 flex items-center gap-2">
+        <div class="w-6 h-6 rounded-lg bg-accent/20 flex items-center justify-center"><i data-lucide="camera" class="w-3.5 h-3.5 text-accent"></i>
+        </div><span class="text-sm font-semibold">Camera Stream Nhận Diện</span> <span class="ml-auto text-xs text-emerald-400 flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span> Live</span>
+       </div>
+       <div class="camera-frame w-full h-48 relative flex items-center justify-center bg-gradient-to-b from-black/40 to-black/20">
+        <div class="flex flex-col items-center gap-3 text-white/40">
+         <i data-lucide="video" class="w-12 h-12 opacity-30"></i>
+         <p class="text-xs text-center">Khu vực cổng ra vào - Camera ID: CAM-01</p>
+         <div class="text-[10px] text-white/20 flex gap-4">
+          <span>Độ phân giải: 1080p</span> <span>FPS: 30</span>
+         </div>
+        </div><!-- Scanning effect -->
+        <div class="absolute inset-0 pointer-events-none"></div>
+       </div><!-- Latest Detection -->
+       <div class="p-4 bg-black/20 border-t border-white/5">
+        <p class="text-xs text-white/40 mb-2">Phát hiện gần nhất</p>
+        <div class="flex items-center gap-3 p-2 rounded-lg bg-white/3">
+         <div class="w-10 h-10 rounded-lg bg-accent/20 flex items-center justify-center flex-shrink-0"><i data-lucide="check-circle" class="w-5 h-5 text-accent"></i>
+         </div>
+         <div>
+          <p class="text-sm font-medium">Biển số: <span id="cam-plate" class="text-accent font-mono">30A-12345</span></p>
+          <p class="text-xs text-white/40"><span id="cam-time">Vừa phát hiện</span></p>
+         </div>
+        </div>
+       </div>
+      </div><!-- Vehicle Information & Stats -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 anim-fade anim-d2">
+       <div class="glass-card rounded-xl p-4">
+        <div class="flex items-center gap-2 mb-2"><i data-lucide="layout-grid" class="w-4 h-4 text-accent"></i> <span class="text-xs text-white/40 uppercase tracking-wider">Tổng chỗ</span>
+        </div>
+        <p id="stat-total" class="text-2xl font-bold">36</p>
+       </div>
+       <div class="glass-card rounded-xl p-4">
+        <div class="flex items-center gap-2 mb-2"><i data-lucide="check-circle" class="w-4 h-4 text-emerald-400"></i> <span class="text-xs text-white/40 uppercase tracking-wider">Trống</span>
+        </div>
+        <p id="stat-free" class="text-2xl font-bold text-emerald-400">0</p>
+       </div>
+       <div class="glass-card rounded-xl p-4">
+        <div class="flex items-center gap-2 mb-2"><i data-lucide="car" class="w-4 h-4 text-rose-400"></i> <span class="text-xs text-white/40 uppercase tracking-wider">Đang đỗ</span>
+        </div>
+        <p id="stat-occupied" class="text-2xl font-bold text-rose-400">0</p>
+       </div>
+       <div class="glass-card rounded-xl p-4">
+        <div class="flex items-center gap-2 mb-2"><i data-lucide="percent" class="w-4 h-4 text-accentAlt"></i> <span class="text-xs text-white/40 uppercase tracking-wider">Tỉ lệ</span>
+        </div>
+        <p id="stat-rate" class="text-2xl font-bold text-accentAlt">0%</p>
+       </div>
+      </div><!-- Occupancy Bar -->
+      <div class="glass-card rounded-xl p-4 anim-fade anim-d3">
+       <div class="flex items-center justify-between mb-2"><span class="text-xs text-white/40 uppercase tracking-wider">Mức độ lấp đầy</span> <span id="bar-pct" class="text-xs font-medium text-accent">0%</span>
+       </div>
+       <div class="w-full h-3 rounded-full bg-white/5 overflow-hidden">
+        <div id="bar-fill" class="h-full rounded-full bg-gradient-to-r from-accent to-accentAlt transition-all duration-700" style="width:0%"></div>
+       </div>
+      </div>
+     </div><!-- Right Side: Sidebar -->
+     <div class="space-y-4">
+      <!-- Current Vehicle Info -->
+      <div class="glass-card rounded-2xl p-4 anim-fade anim-d4">
+       <div class="flex items-center gap-2 mb-4 pb-4 border-b border-white/5">
+        <div class="w-6 h-6 rounded-lg bg-accentAlt/20 flex items-center justify-center"><i data-lucide="info" class="w-3.5 h-3.5 text-accentAlt"></i>
+        </div><span class="text-sm font-semibold">Thông tin xe</span>
+       </div>
+       <div class="space-y-3">
+        <div>
+         <p class="text-xs text-white/40 mb-1">Biển số</p>
+         <p id="info-plate" class="text-sm font-mono font-bold text-accent">—</p>
+        </div>
+        <div>
+         <p class="text-xs text-white/40 mb-1">Loại xe</p>
+         <p id="info-type" class="text-sm">—</p>
+        </div>
+        <div>
+         <p class="text-xs text-white/40 mb-1">Vị trí</p>
+         <p id="info-slot" class="text-sm font-mono font-bold">—</p>
+        </div>
+        <div>
+         <p class="text-xs text-white/40 mb-1">Giờ vào</p>
+         <p id="info-time" class="text-sm">—</p>
+        </div>
+       </div>
+      </div><!-- Vehicle List Scroll -->
+      <div class="glass-card rounded-2xl p-4 anim-fade anim-d5 flex flex-col">
+       <div class="flex items-center gap-2 mb-3 pb-3 border-b border-white/5">
+        <div class="w-6 h-6 rounded-lg bg-amber-400/20 flex items-center justify-center"><i data-lucide="list" class="w-3.5 h-3.5 text-amber-400"></i>
+        </div><span class="text-sm font-semibold">Danh sách xe</span> <span id="vehicle-count" class="ml-auto text-xs bg-accent/20 text-accent px-2 py-1 rounded">0 xe</span>
+       </div>
+       <div id="vehicle-list" class="flex-1 overflow-y-auto space-y-2 min-h-[240px]">
+        <div class="text-center py-8">
+         <p class="text-xs text-white/40">Chưa có xe nào</p>
+        </div>
+       </div>
+      </div><!-- Barrier Controls -->
+      <div class="glass-card rounded-2xl p-4 anim-fade anim-d6">
+       <div class="flex items-center gap-2 mb-4 pb-4 border-b border-white/5">
+        <div class="w-6 h-6 rounded-lg bg-rose-500/20 flex items-center justify-center"><i data-lucide="zap" class="w-3.5 h-3.5 text-rose-500"></i>
+        </div><span class="text-sm font-semibold">Điều khiển Barrier</span>
+       </div>
+       <div class="space-y-2">
+        <button class="barrier-btn w-full py-2 px-3 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-sm font-medium hover:bg-emerald-500/30 transition flex items-center justify-center gap-2" onclick="handleBarrier('open')"> <i data-lucide="arrow-up" class="w-4 h-4"></i> Mở Barrier </button> <button class="barrier-btn w-full py-2 px-3 rounded-lg bg-slate-600/20 border border-slate-500/40 text-slate-300 text-sm font-medium hover:bg-slate-600/30 transition flex items-center justify-center gap-2" onclick="handleBarrier('close')"> <i data-lucide="arrow-down" class="w-4 h-4"></i> Đóng Barrier </button> <button class="barrier-btn w-full py-2 px-3 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-400 text-sm font-medium hover:bg-amber-500/30 transition flex items-center justify-center gap-2" onclick="handleBarrier('stop')"> <i data-lucide="pause-circle" class="w-4 h-4"></i> Dừng Barrier </button>
+       </div>
+       <p id="barrier-status" class="text-xs text-white/40 text-center mt-3">Trạng thái: <span id="barrier-state" class="text-white/60">Idle</span></p>
+      </div><!-- Alerts -->
+      <div class="glass-card rounded-2xl p-4 anim-fade anim-d6">
+       <div class="flex items-center gap-2 mb-3 pb-3 border-b border-white/5">
+        <div class="w-6 h-6 rounded-lg bg-red-500/20 flex items-center justify-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-red-500"></i>
+        </div><span class="text-sm font-semibold">Cảnh báo hệ thống</span>
+       </div>
+       <div id="alerts-container" class="space-y-2 max-h-40 overflow-auto">
+        <div class="alert-box alert-info p-2 rounded">
+         <p class="text-xs font-medium text-blue-300">ℹ️ Hệ thống bình thường</p>
+        </div>
+       </div>
+      </div>
+     </div>
+    </div>
+   </div>
+  </div>
+  <script>
+// State
+let allData = [];
+let currentVehicle = null;
+const ZONE_CAPACITY = { A: 16, B: 12, C: 8 };
+
+// Config
+const defaultConfig = {
+  dashboard_title: 'Smart Parking AI Pro',
+  zone_a_name: 'Zone A',
+  zone_b_name: 'Zone B',
+  zone_c_name: 'Zone C',
+  background_color: '#0c0f1a',
+  surface_color: '#151929',
+  text_color: '#e2e8f0',
+  accent_color: '#10b981',
+  accent_alt_color: '#6366f1',
+  font_family: 'Outfit',
+  font_size: 16
+};
+
+function applyConfig(config) {
+  const c = { ...defaultConfig, ...config };
+  document.getElementById('el-title').textContent = c.dashboard_title;
+  document.body.style.backgroundColor = c.background_color;
+  document.body.style.color = c.text_color;
+  document.body.style.fontFamily = `${c.font_family}, Outfit, sans-serif`;
+}
+
+// Element SDK
+window.elementSdk.init({
+  defaultConfig,
+  onConfigChange: async (config) => { applyConfig(config); },
+  mapToCapabilities: (config) => ({
+    recolorables: [
+      { get: () => config.background_color || defaultConfig.background_color, set: v => { config.background_color = v; window.elementSdk.setConfig({ background_color: v }); } },
+      { get: () => config.surface_color || defaultConfig.surface_color, set: v => { config.surface_color = v; window.elementSdk.setConfig({ surface_color: v }); } },
+      { get: () => config.text_color || defaultConfig.text_color, set: v => { config.text_color = v; window.elementSdk.setConfig({ text_color: v }); } },
+      { get: () => config.accent_color || defaultConfig.accent_color, set: v => { config.accent_color = v; window.elementSdk.setConfig({ accent_color: v }); } },
+      { get: () => config.accent_alt_color || defaultConfig.accent_alt_color, set: v => { config.accent_alt_color = v; window.elementSdk.setConfig({ accent_alt_color: v }); } }
+    ],
+    borderables: [],
+    fontEditable: {
+      get: () => config.font_family || defaultConfig.font_family,
+      set: v => { config.font_family = v; window.elementSdk.setConfig({ font_family: v }); }
+    },
+    fontSizeable: {
+      get: () => config.font_size || defaultConfig.font_size,
+      set: v => { config.font_size = v; window.elementSdk.setConfig({ font_size: v }); }
+    }
+  }),
+  mapToEditPanelValues: (config) => new Map([
+    ['dashboard_title', config.dashboard_title || defaultConfig.dashboard_title],
+    ['zone_a_name', config.zone_a_name || defaultConfig.zone_a_name],
+    ['zone_b_name', config.zone_b_name || defaultConfig.zone_b_name],
+    ['zone_c_name', config.zone_c_name || defaultConfig.zone_c_name]
+  ])
+});
+
+// Data SDK
+const dataHandler = {
+  onDataChanged(data) {
+    allData = data;
+    renderStats();
+    renderInfo();
+    generateAlerts();
+  }
+};
+
+(async () => {
+  const r = await window.dataSdk.init(dataHandler);
+  if (!r.isOk) console.error('Data SDK init failed');
+})();
+
+// Render Stats
+function renderStats() {
+  const total = ZONE_CAPACITY.A + ZONE_CAPACITY.B + ZONE_CAPACITY.C;
+  const occupied = allData.length;
+  const free = Math.max(0, total - occupied);
+  const rate = total > 0 ? Math.round((occupied / total) * 100) : 0;
+
+  document.getElementById('stat-total').textContent = total;
+  document.getElementById('stat-free').textContent = free;
+  document.getElementById('stat-occupied').textContent = occupied;
+  document.getElementById('stat-rate').textContent = rate + '%';
+  document.getElementById('bar-pct').textContent = rate + '%';
+  document.getElementById('bar-fill').style.width = rate + '%';
+}
+
+// Render Info
+function renderInfo() {
+  if (allData.length === 0) {
+    currentVehicle = null;
+    document.getElementById('info-plate').textContent = '—';
+    document.getElementById('info-type').textContent = '—';
+    document.getElementById('info-slot').textContent = '—';
+    document.getElementById('info-time').textContent = '—';
+    document.getElementById('cam-plate').textContent = '—';
+    renderVehicleList();
+    return;
+  }
+
+  currentVehicle = allData[allData.length - 1];
+  const typeMap = { car: 'Ô tô', motorbike: 'Xe máy', ev: 'Xe điện' };
+  const entryTime = currentVehicle.entry_time ? new Date(currentVehicle.entry_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '—';
+
+  document.getElementById('info-plate').textContent = currentVehicle.plate || '—';
+  document.getElementById('info-type').textContent = typeMap[currentVehicle.vehicle_type] || '—';
+  document.getElementById('info-slot').textContent = currentVehicle.slot_id || '—';
+  document.getElementById('info-time').textContent = entryTime;
+  document.getElementById('cam-plate').textContent = currentVehicle.plate || '—';
+  renderVehicleList();
+}
+
+// Render Vehicle List with Scroll
+function renderVehicleList() {
+  const container = document.getElementById('vehicle-list');
+  const countEl = document.getElementById('vehicle-count');
+  
+  if (allData.length === 0) {
+    container.innerHTML = '<div class="text-center py-8"><p class="text-xs text-white/40">Chưa có xe nào</p></div>';
+    countEl.textContent = '0 xe';
+    return;
+  }
+
+  countEl.textContent = allData.length + ' xe';
+  const typeMap = { car: 'Ô tô', motorbike: 'Xe máy', ev: 'Xe điện' };
+  
+  // Create map of existing items for efficient updates
+  const existingItems = new Map(
+    [...container.children].map(el => [el.dataset.vehicleId, el])
+  );
+
+  const sortedData = [...allData].sort((a, b) => new Date(b.entry_time) - new Date(a.entry_time));
+  
+  sortedData.forEach((vehicle, idx) => {
+    const vehicleId = vehicle.__backendId || vehicle.plate;
+    const entryTime = vehicle.entry_time ? new Date(vehicle.entry_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '—';
+    const isLatest = idx === 0;
+    
+    if (existingItems.has(vehicleId)) {
+      // Update existing element
+      const el = existingItems.get(vehicleId);
+      el.className = isLatest ? 'vehicle-item p-3 rounded-lg bg-gradient-to-r from-accent/20 to-accent/5 border border-accent/40 anim-slide' : 'vehicle-item p-3 rounded-lg bg-white/3 border border-white/5 hover:bg-white/5 transition';
+      existingItems.delete(vehicleId);
+    } else {
+      // Create new element
+      const el = document.createElement('div');
+      el.dataset.vehicleId = vehicleId;
+      el.className = isLatest ? 'vehicle-item p-3 rounded-lg bg-gradient-to-r from-accent/20 to-accent/5 border border-accent/40 anim-slide' : 'vehicle-item p-3 rounded-lg bg-white/3 border border-white/5 hover:bg-white/5 transition';
+      
+      const typeIcon = vehicle.vehicle_type === 'car' ? 'car' : vehicle.vehicle_type === 'motorbike' ? 'bike' : 'zap';
+      const userBadge = vehicle.user_type === 'monthly' ? '<span class="text-[9px] bg-emerald-500/30 text-emerald-300 px-1.5 py-0.5 rounded">Vé tháng</span>' : '<span class="text-[9px] bg-amber-500/30 text-amber-300 px-1.5 py-0.5 rounded">Vãng lai</span>';
+      
+      el.innerHTML = `
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex items-start gap-2 flex-1 min-w-0">
+            <div class="w-7 h-7 rounded-lg ${isLatest ? 'bg-accent/30' : 'bg-white/10'} flex items-center justify-center flex-shrink-0 mt-0.5">
+              <i data-lucide="${typeIcon}" class="w-3.5 h-3.5 ${isLatest ? 'text-accent' : 'text-white/50'}"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-mono font-bold ${isLatest ? 'text-accent' : 'text-white'} truncate">${vehicle.plate || '—'}</p>
+              <div class="flex items-center gap-1 mt-0.5 flex-wrap">
+                <span class="text-[10px] text-white/50">${typeMap[vehicle.vehicle_type] || '—'}</span>
+                ${userBadge}
+              </div>
+              <p class="text-xs text-white/40 mt-1">Slot: <span class="font-mono text-white/60">${vehicle.slot_id || '—'}</span></p>
+              <p class="text-xs text-white/40">Vào: ${entryTime}</p>
+            </div>
+          </div>
+          ${isLatest ? '<span class="text-xs bg-accent/30 text-accent px-2 py-1 rounded flex-shrink-0">Mới</span>' : ''}
+        </div>
+      `;
+      
+      container.insertBefore(el, container.firstChild);
+    }
+  });
+
+  // Remove deleted items
+  existingItems.forEach(el => el.remove());
+  
+  // Re-create icons for new elements
+  lucide.createIcons();
+  
+  // Auto-scroll to top to show new vehicle
+  if (allData.length > 0) {
+    container.scrollTop = 0;
+  }
+}
+
+// Barrier Control
+function handleBarrier(action) {
+  const states = { open: 'Mở', close: 'Đóng', stop: 'Dừng' };
+  document.getElementById('barrier-state').textContent = states[action] || 'Idle';
+  document.getElementById('barrier-state').className = action === 'open' ? 'text-emerald-400' : action === 'close' ? 'text-slate-300' : 'text-amber-400';
+
+  setTimeout(() => {
+    document.getElementById('barrier-state').textContent = 'Ready';
+    document.getElementById('barrier-state').className = 'text-white/60';
+  }, 2000);
+}
+
+// Alerts
+function generateAlerts() {
+  const container = document.getElementById('alerts-container');
+  const alerts = [];
+  const total = ZONE_CAPACITY.A + ZONE_CAPACITY.B + ZONE_CAPACITY.C;
+  const rate = total > 0 ? Math.round((allData.length / total) * 100) : 0;
+
+  if (allData.length === 0) {
+    container.innerHTML = '<div class="alert-box alert-info p-2 rounded"><p class="text-xs font-medium text-blue-300">ℹ️ Bãi đỗ trống</p></div>';
+    return;
+  }
+
+  if (rate > 85) {
+    alerts.push({ type: 'critical', text: '🔴 Bãi đỗ gần hết chỗ (' + rate + '%)' });
+  }
+  if (rate > 65 && rate <= 85) {
+    alerts.push({ type: 'warning', text: '⚠️ Bãi đỗ sắp đầy (' + rate + '%)' });
+  }
+
+  ['A', 'B', 'C'].forEach(z => {
+    const zCount = allData.filter(d => d.zone === z).length;
+    const zRate = Math.round((zCount / ZONE_CAPACITY[z]) * 100);
+    if (zRate === 100) alerts.push({ type: 'critical', text: '🔴 Zone ' + z + ' đã hết chỗ' });
+    else if (zRate > 90) alerts.push({ type: 'warning', text: '⚠️ Zone ' + z + ' sắp hết (' + zRate + '%)' });
+  });
+
+  if (alerts.length === 0) {
+    container.innerHTML = '<div class="alert-box alert-info p-2 rounded"><p class="text-xs font-medium text-blue-300">ℹ️ Hệ thống bình thường</p></div>';
+  } else {
+    container.innerHTML = alerts.map(a => `<div class="alert-box alert-${a.type} p-2 rounded"><p class="text-xs font-medium">${a.text}</p></div>`).join('');
+  }
+}
+
+// Clock
+function updateClock() {
+  const el = document.getElementById('el-clock');
+  if (el) el.textContent = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// Simulate Camera Detection
+setInterval(() => {
+  if (allData.length > 0) {
+    const randomVehicle = allData[Math.floor(Math.random() * allData.length)];
+    document.getElementById('cam-plate').textContent = randomVehicle.plate;
+    document.getElementById('cam-time').textContent = 'Vừa phát hiện';
+  }
+}, 5000);
+
+// Init render
+renderStats();
+renderInfo();
+generateAlerts();
+lucide.createIcons();
+</script>
+ <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9f3c047b6392ddc3',t:'MTc3NzQ0MTcwNC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>

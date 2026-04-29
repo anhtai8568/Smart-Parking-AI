@@ -1,16 +1,16 @@
 #define S1_PIN 32
 #define S2_PIN 34
 #define S3_PIN 36
-#define S4_PIN 42
+#define S4_PIN 38
 #define S5_PIN 40
-#define S6_PIN 38
+#define S6_PIN 42
 
 int prev[6] = {-1, -1, -1, -1, -1, -1};
 
 int readStable(int pin){
   int count = 0;
   for(int i = 0; i < 10; i++){
-    if(digitalRead(pin) == 1) count++; // nếu ngược thì đổi lại 0
+    if(digitalRead(pin) == 1) count++;
     delay(2);
   }
   return (count >= 7) ? 1 : 0;
@@ -18,6 +18,7 @@ int readStable(int pin){
 
 void setup() {
   Serial.begin(9600);
+  Serial1.begin(9600);
 
   pinMode(S1_PIN, INPUT);
   pinMode(S2_PIN, INPUT);
@@ -37,29 +38,29 @@ void loop() {
   s[4] = readStable(S5_PIN);
   s[5] = readStable(S6_PIN);
 
-  bool changed = false;
+  int empty = 0;
   for(int i = 0; i < 6; i++){
-    if(s[i] != prev[i]){
-      changed = true;
-      break;
-    }
+    if(s[i] == 0) empty++;
   }
 
-  if(changed){
-    for(int i = 0; i < 6; i++){
-      Serial.print("S");
-      Serial.print(i+1);
-      Serial.print(": ");
-      Serial.print(s[i] == 1 ? "CO XE" : "TRONG");
+  // ===== TẠO CHUỖI GỬI =====
+  String msg = "";
 
-      if(i < 5) Serial.print(" | ");
-    }
-    Serial.println();
+  for(int i = 0; i < 6; i++){
+    msg += "S";
+    msg += String(i+1);
+    msg += ": ";
+    msg += (s[i] == 1 ? "CO XE" : "TRONG");
 
-    for(int i = 0; i < 6; i++){
-      prev[i] = s[i];
-    }
+    if(i < 5) msg += " | ";
   }
 
-  delay(50);
+  msg += " || EMPTY:";
+  msg += String(empty);
+
+  // ===== GỬI =====
+  Serial.println(msg);     // debug
+  Serial1.println(msg);    // gửi ESP32
+
+  delay(200);
 }

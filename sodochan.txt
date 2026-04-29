@@ -6,7 +6,7 @@ Echo1: D18
 
 // US 015 (kích hoạt trong barrier)
 Trig2: D5
-Echo2: D17
+Echo2: D4
 
 // Servo MG90s
 Servo: D21  
@@ -19,8 +19,20 @@ MISO: D12
 RST: D27 
 
 
+// giao tiếp tx - rx
+tx1 D18 mega Hv1 
+Lv1 rx2 d16 esp32 
+lv4 tx2 d17 esp32
+hv4 rx1 d19 mega
 
+//Arduino mega 2560
 
-
+// 2 dò line 5 mắt (6 chỗ ô tô trống)
+S1: D32
+S2: D34
+S3: D36
+S4: D38
+S5: D40
+S6: D42 
 
 
