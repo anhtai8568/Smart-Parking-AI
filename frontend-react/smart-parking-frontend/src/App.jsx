@@ -1,7 +1,12 @@
-import AppRoutes from './routes/AppRoutes'
+import React from 'react';
+import AppRoutes from './routes/AppRoutes';
 
 function App() {
-  return <AppRoutes />
+  return (
+    <div className="app-container">
+      <AppRoutes />
+    </div>
+  );
 }
 
-export default App
+export default App;
