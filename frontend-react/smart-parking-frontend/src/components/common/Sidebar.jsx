@@ -17,8 +17,8 @@ function Sidebar({ type }) {
   const userMenus = [
     { label: 'Tổng quan', path: '/user/dashboard' },
     { label: 'Lịch sử gửi xe', path: '/user/history' },
-    { label: 'Thông tin tài khoản', path: '/user/account' },
     { label: 'Lịch sử thanh toán', path: '/user/payments' },
+    { label: 'Thông tin tài khoản', path: '/user/account' },
   ]
 
   const menus = type === 'admin' ? adminMenus : userMenus

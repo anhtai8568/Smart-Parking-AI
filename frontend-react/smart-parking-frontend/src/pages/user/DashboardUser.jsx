@@ -138,33 +138,40 @@ function VehicleCard({ type, sub, rejectedSub, isParked, onViewRejected }) {
 
   const plate = sub.vehicleId?.licensePlate || '—'
   const brand = sub.vehicleId?.brand || ''
+  const vehicleColor = sub.vehicleId?.color || ''
   const st = sub.status
 
   return (
     <div style={{ ...cardBase, borderTop: `4px solid ${color}` }}>
-      {typeTag}
-
-      <div style={{ fontSize: '26px', fontWeight: '800', letterSpacing: '3px', color: C.textMain }}>
-        {plate}
-      </div>
-      {brand && <div style={{ fontSize: '13px', color: C.textSub }}>{brand}</div>}
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+        {typeTag}
         <span style={{
-          padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600',
+          padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600',
           backgroundColor: STATUS_BG[st] || '#f3f4f6', color: STATUS_COLOR[st] || '#6b7280',
         }}>
           {STATUS_LABEL[st] || st}
         </span>
-        {isParked && (
+      </div>
+
+      <div style={{ fontSize: '26px', fontWeight: '800', letterSpacing: '3px', color: C.textMain }}>
+        {plate}
+      </div>
+      {(brand || vehicleColor) && (
+        <div style={{ fontSize: '13px', color: C.textSub }}>
+          {[brand, vehicleColor].filter(Boolean).join(' · ')}
+        </div>
+      )}
+
+      {isParked && (
+        <div>
           <span style={{
             padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600',
             backgroundColor: '#dcfce7', color: '#15803d',
           }}>
             Đang trong bãi
           </span>
-        )}
-      </div>
+        </div>
+      )}
 
       {st === 'active' && sub.endDate && (
         <div style={{ fontSize: '13px', color: C.textSub }}>
@@ -295,16 +302,7 @@ function DashboardUser() {
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: C.bg, padding: '32px 24px', fontFamily: "'Inter', sans-serif" }}>
-      <div style={{ marginBottom: '32px', borderLeft: `4px solid ${C.accent}`, paddingLeft: '16px' }}>
-        <h1 style={{ fontSize: '22px', fontWeight: '800', margin: 0, color: C.textMain }}>
-          Xin chào, {currentUser.fullName || currentUser.username}
-        </h1>
-        <p style={{ margin: '4px 0 0', color: C.textSub, fontSize: '14px' }}>
-          Smart Parking AI — Cổng thông tin người dùng
-        </p>
-      </div>
-
-      <div style={{ fontSize: '11px', fontWeight: '700', color: C.textSub, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '14px' }}>
+<div style={{ fontSize: '11px', fontWeight: '700', color: C.textSub, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '14px' }}>
         Xe của bạn
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>

@@ -294,7 +294,7 @@ export async function listMySubscriptions(req, res) {
         const items = await UserPackage.find(query)
             .sort({ createdAt: -1 })
             .limit(Math.min(Number(limit) || 50, 200))
-            .populate('vehicleId', 'licensePlate vehicleType')
+            .populate('vehicleId', 'licensePlate vehicleType brand color')
 
         return res.json({
             status: 'success',
