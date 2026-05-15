@@ -12,12 +12,9 @@ import ResetPassword from '../pages/auth/ResetPassword';
 // Import các trang Admin
 import DashboardAdmin from '../pages/admin/DashboardAdmin';
 import ManageUsers from '../pages/admin/ManageUsers';
-import ManageVehicles from '../pages/admin/ManageVehicles';
-import VisitorParking from '../pages/admin/VisitorParking';
 import Pricing from '../pages/admin/Pricing';
-import Reports from '../pages/admin/Reports';
-import Settings from '../pages/admin/Settings';
 import MonthlyRequests from '../pages/admin/MonthlyRequests';
+import AdminParkingHistory from '../pages/admin/AdminParkingHistory';
 
 // Import các trang User
 import DashboardUser from '../pages/user/DashboardUser';
@@ -47,13 +44,10 @@ function AppRoutes() {
         >
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<DashboardAdmin />} />
-          <Route path="users" element={<ManageUsers />} />
-          <Route path="vehicles" element={<ManageVehicles />} />
-          <Route path="visitors" element={<VisitorParking />} />
           <Route path="monthly-tickets" element={<MonthlyRequests />} />
+          <Route path="users" element={<ManageUsers />} />
+          <Route path="parking-history" element={<AdminParkingHistory />} />
           <Route path="pricing" element={<Pricing />} />
-          <Route path="reports" element={<Reports />} />
-          <Route path="settings" element={<Settings />} />
         </Route>
 
         {/* User Routes */}
