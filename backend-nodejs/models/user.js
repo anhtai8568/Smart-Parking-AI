@@ -34,6 +34,14 @@ const userSchema = new mongoose.Schema(
             lowercase: true,
             default: null,
         },
+        resetPasswordTokenHash: {
+            type: String,
+            default: null,
+        },
+        resetPasswordExpiresAt: {
+            type: Date,
+            default: null,
+        },
         status: {
             type: String,
             enum: ['active', 'blocked'],

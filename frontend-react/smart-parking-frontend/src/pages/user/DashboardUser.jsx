@@ -1,19 +1,238 @@
-import StatCard from '../../components/common/StatCard'
+import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
+import api from '../../services/api'
 
-function DashboardUser() {
+const C = {
+  bg: '#f8fafc',
+  card: '#ffffff',
+  border: '#e2e8f0',
+  accent: '#2563eb',
+  orange: '#d97706',
+  textMain: '#1e293b',
+  textSub: '#64748b',
+}
+
+const STATUS_LABEL = {
+  active: 'Đang hoạt động',
+  pending: 'Chờ duyệt',
+  expired: 'Hết hạn',
+  rejected: 'Bị từ chối',
+  cancelled: 'Đã hủy',
+}
+
+const STATUS_COLOR = {
+  active: '#15803d',
+  pending: '#b45309',
+  expired: '#6b7280',
+  rejected: '#b91c1c',
+  cancelled: '#9ca3af',
+}
+
+const STATUS_BG = {
+  active: '#dcfce7',
+  pending: '#fef3c7',
+  expired: '#f3f4f6',
+  rejected: '#fee2e2',
+  cancelled: '#f3f4f6',
+}
+
+function fmtDate(d) {
+  return d ? new Date(d).toLocaleDateString('vi-VN') : '—'
+}
+
+function VehicleCard({ type, sub, isParked }) {
+  const isMotorbike = type === 'motorbike'
+  const label = isMotorbike ? 'Xe Máy' : 'Ô Tô'
+  const color = isMotorbike ? C.accent : C.orange
+
+  const cardStyle = {
+    backgroundColor: C.card,
+    border: `1px solid ${C.border}`,
+    borderRadius: '20px',
+    padding: '28px',
+    boxShadow: '0 2px 10px rgba(0,0,0,0.05)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+    borderTop: `4px solid ${color}`,
+  }
+
+  const typeTag = (
+    <div style={{ fontSize: '11px', fontWeight: '700', color, textTransform: 'uppercase', letterSpacing: '1.5px' }}>
+      {label}
+    </div>
+  )
+
+  if (!sub) {
+    return (
+      <div style={cardStyle}>
+        {typeTag}
+        <div style={{ fontSize: '14px', color: C.textSub }}>Chưa đăng ký gói tháng</div>
+        <div style={{ marginTop: 'auto' }}>
+          <Link to="/user/monthly-ticket" style={{ textDecoration: 'none' }}>
+            <button style={{
+              padding: '11px 0',
+              width: '100%',
+              backgroundColor: color,
+              color: 'white',
+              border: 'none',
+              borderRadius: '10px',
+              fontSize: '13px',
+              fontWeight: '600',
+              cursor: 'pointer',
+            }}>
+              + Đăng ký ngay
+            </button>
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  const plate = sub.vehicleId?.licensePlate || '—'
+  const brand = sub.vehicleId?.brand || ''
+  const st = sub.status
+
   return (
-    <div>
-      <div className="card">
-        <h3 className="card-title">Thông tin phương tiện</h3>
-        <p>Biển số: 15A-123.45</p>
-        <p>Loại xe: Ô tô</p>
-        <p>Mã thành viên: TV001</p>
+    <div style={cardStyle}>
+      {typeTag}
+      <div style={{ fontSize: '26px', fontWeight: '800', letterSpacing: '3px', color: C.textMain }}>
+        {plate}
+      </div>
+      {brand && <div style={{ fontSize: '13px', color: C.textSub }}>{brand}</div>}
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+        <span style={{
+          padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600',
+          backgroundColor: STATUS_BG[st] || '#f3f4f6', color: STATUS_COLOR[st] || '#6b7280',
+        }}>
+          {STATUS_LABEL[st] || st}
+        </span>
+        {isParked && (
+          <span style={{
+            padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600',
+            backgroundColor: '#dcfce7', color: '#15803d',
+          }}>
+            Đang trong bãi
+          </span>
+        )}
       </div>
 
-      <div className="grid-3">
-        <StatCard title="Số dư" value="500.000đ" />
-        <StatCard title="Gói tháng" value="Đang hoạt động" note="Hết hạn 30/04/2026" />
-        <StatCard title="Trạng thái xe" value="Đang ở ngoài bãi" />
+      {st === 'active' && sub.endDate && (
+        <div style={{ fontSize: '13px', color: C.textSub }}>
+          Hết hạn: <strong style={{ color: C.textMain }}>{fmtDate(sub.endDate)}</strong>
+        </div>
+      )}
+      {st === 'pending' && (
+        <div style={{ fontSize: '12px', color: C.textSub, fontStyle: 'italic' }}>
+          Đang chờ admin duyệt
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Stat({ title, value, note }) {
+  return (
+    <div style={{
+      backgroundColor: C.card,
+      border: `1px solid ${C.border}`,
+      borderRadius: '16px',
+      padding: '24px',
+      boxShadow: '0 2px 10px rgba(0,0,0,0.05)',
+    }}>
+      <div style={{ fontSize: '12px', color: C.textSub, marginBottom: '10px' }}>{title}</div>
+      <div style={{ fontSize: '34px', fontWeight: '800', color: C.textMain, lineHeight: 1 }}>{value}</div>
+      {note && <div style={{ fontSize: '12px', color: C.textSub, marginTop: '8px' }}>{note}</div>}
+    </div>
+  )
+}
+
+function DashboardUser() {
+  const [subscriptions, setSubscriptions] = useState([])
+  const [sessions, setSessions] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}')
+
+  useEffect(() => {
+    if (!currentUser.username) { setLoading(false); return }
+
+    Promise.all([
+      api.get('/api/subscriptions/me', { params: { username: currentUser.username } }),
+      api.get('/api/parking-history', { params: { username: currentUser.username, limit: 100 } }),
+    ])
+      .then(([subRes, histRes]) => {
+        setSubscriptions(subRes.data?.data || [])
+        setSessions(histRes.data?.data || [])
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [])
+
+  const motorbikeSub = subscriptions.find(
+    (s) => s.vehicleType === 'motorbike' && ['active', 'pending'].includes(s.status)
+  )
+  const carSub = subscriptions.find(
+    (s) => s.vehicleType === 'car' && ['active', 'pending'].includes(s.status)
+  )
+
+  const inProgressPlates = new Set(
+    sessions.filter((s) => s.status === 'in_progress').map((s) => s.licensePlate)
+  )
+
+  const now = new Date()
+  const thisMonthCount = sessions.filter((s) => {
+    const d = new Date(s.entryAt)
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+  }).length
+
+  const activePackages = [motorbikeSub, carSub].filter((s) => s?.status === 'active').length
+
+  if (loading) {
+    return (
+      <div style={{ padding: '60px', textAlign: 'center', color: C.textSub, fontFamily: "'Inter', sans-serif" }}>
+        Đang tải dữ liệu...
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', backgroundColor: C.bg, padding: '32px 24px', fontFamily: "'Inter', sans-serif" }}>
+      <div style={{ marginBottom: '32px', borderLeft: `4px solid ${C.accent}`, paddingLeft: '16px' }}>
+        <h1 style={{ fontSize: '22px', fontWeight: '800', margin: 0, color: C.textMain }}>
+          Xin chào, {currentUser.fullName || currentUser.username}
+        </h1>
+        <p style={{ margin: '4px 0 0', color: C.textSub, fontSize: '14px' }}>
+          Smart Parking AI — Cổng thông tin người dùng
+        </p>
+      </div>
+
+      <div style={{ fontSize: '11px', fontWeight: '700', color: C.textSub, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '14px' }}>
+        Xe của bạn
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+        <VehicleCard
+          type="motorbike"
+          sub={motorbikeSub}
+          isParked={!!motorbikeSub && inProgressPlates.has(motorbikeSub.vehicleId?.licensePlate)}
+        />
+        <VehicleCard
+          type="car"
+          sub={carSub}
+          isParked={!!carSub && inProgressPlates.has(carSub.vehicleId?.licensePlate)}
+        />
+      </div>
+
+      <div style={{ marginTop: '36px' }}>
+        <div style={{ fontSize: '11px', fontWeight: '700', color: C.textSub, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '14px' }}>
+          Thống kê tháng {now.getMonth() + 1}/{now.getFullYear()}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
+          <Stat title="Số lần gửi xe" value={thisMonthCount} note="lượt trong tháng này" />
+          <Stat title="Xe đang trong bãi" value={inProgressPlates.size} note="phương tiện" />
+          <Stat title="Gói tháng hoạt động" value={activePackages} note="/ 2 gói tối đa" />
+        </div>
       </div>
     </div>
   )

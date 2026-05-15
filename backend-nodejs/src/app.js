@@ -4,6 +4,8 @@ import authRoutes from './routes/auth.routes.js'
 import vehicleRoutes from './routes/vehicle.routes.js'
 import parkingRoutes from './routes/parking.routes.js'
 import userRoutes from './routes/user.routes.js'
+import pricingRoutes from './routes/pricing.routes.js'
+import subscriptionRoutes from './routes/subscription.routes.js'
 
 const app = express()
 
@@ -29,6 +31,8 @@ app.get('/api/health', (_req, res) => {
 })
 
 app.use('/api/auth', authRoutes)
+app.use('/api/pricing', pricingRoutes)
+app.use('/api/subscriptions', subscriptionRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/vehicles', vehicleRoutes)
 app.use('/api/parking-history', parkingRoutes)
