@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import api from '../../services/api';
 
 const colors = {
@@ -32,11 +33,20 @@ function fmtCurrency(value) {
 }
 
 const MonthlyTicket = () => {
+  const location = useLocation();
+  const { prefill, rejectReason } = location.state || {};
+
   const [currentUser] = useState(() => JSON.parse(localStorage.getItem('currentUser') || '{}'));
 
-  const [vehicleType, setVehicleType] = useState('motorbike');
-  const [months, setMonths] = useState(1);
-  const [formData, setFormData] = useState({ licensePlate: '', phone: '', brand: '', color: '', paymentMethod: 'bank_transfer' });
+  const [vehicleType, setVehicleType] = useState(prefill?.vehicleType || 'motorbike');
+  const [months, setMonths] = useState(prefill?.months || 1);
+  const [formData, setFormData] = useState({
+    licensePlate: prefill?.licensePlate || '',
+    phone: prefill?.phone || '',
+    brand: prefill?.brand || '',
+    color: prefill?.color || '',
+    paymentMethod: prefill?.paymentMethod || 'bank_transfer',
+  });
   const [pricing, setPricing] = useState(null);
   const [existingSubs, setExistingSubs] = useState([]);
   const [error, setError] = useState('');
@@ -64,7 +74,7 @@ const MonthlyTicket = () => {
         setPricing(pricingRes.data?.data || null);
         const subs = subsRes.data?.data || [];
         setExistingSubs(subs);
-        applyAutoSelect(subs);
+        if (!prefill) applyAutoSelect(subs);
       } catch (err) {
         setError(err?.response?.data?.message || 'Không tải được dữ liệu');
       } finally {
@@ -276,6 +286,26 @@ const MonthlyTicket = () => {
               </div>
             ) : (
               <>
+                {rejectReason && (
+                  <div style={{
+                    marginBottom: '24px',
+                    padding: '16px 20px',
+                    backgroundColor: '#fff1f2',
+                    border: '1px solid #fecdd3',
+                    borderRadius: '14px',
+                  }}>
+                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#b91c1c', marginBottom: '6px' }}>
+                      Yêu cầu trước của bạn không được duyệt
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#7f1d1d', lineHeight: '1.6' }}>
+                      Lý do: {rejectReason}
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#b45309', marginTop: '8px', fontStyle: 'italic' }}>
+                      Vui lòng kiểm tra lại thông tin và gửi yêu cầu mới.
+                    </div>
+                  </div>
+                )}
+
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '25px' }}>
                   <div>
                     <label style={{ color: colors.textMain, fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase' }}>Biển Số Xe</label>

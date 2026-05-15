@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import api from '../../services/api'
 
 const C = {
@@ -40,12 +40,26 @@ function fmtDate(d) {
   return d ? new Date(d).toLocaleDateString('vi-VN') : '—'
 }
 
-function VehicleCard({ type, sub, isParked }) {
+function fmtCurrency(value) {
+  return `${Number(value || 0).toLocaleString('vi-VN')}đ`
+}
+
+function Row({ label, value }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+      <span style={{ color: C.textSub }}>{label}</span>
+      <span style={{ color: C.textMain, fontWeight: '600' }}>{value}</span>
+    </div>
+  )
+}
+
+function VehicleCard({ type, sub, rejectedSub, isParked, onViewRejected }) {
+  const [expanded, setExpanded] = useState(false)
   const isMotorbike = type === 'motorbike'
   const label = isMotorbike ? 'Xe Máy' : 'Ô Tô'
   const color = isMotorbike ? C.accent : C.orange
 
-  const cardStyle = {
+  const cardBase = {
     backgroundColor: C.card,
     border: `1px solid ${C.border}`,
     borderRadius: '20px',
@@ -54,7 +68,6 @@ function VehicleCard({ type, sub, isParked }) {
     display: 'flex',
     flexDirection: 'column',
     gap: '14px',
-    borderTop: `4px solid ${color}`,
   }
 
   const typeTag = (
@@ -63,23 +76,57 @@ function VehicleCard({ type, sub, isParked }) {
     </div>
   )
 
+  // Bị từ chối — không có active/pending nhưng có rejected gần nhất
+  if (!sub && rejectedSub) {
+    const plate = rejectedSub.vehicleId?.licensePlate || '—'
+    return (
+      <div style={{ ...cardBase, borderTop: '4px solid #b91c1c' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {typeTag}
+          <span style={{
+            padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600',
+            backgroundColor: '#fee2e2', color: '#b91c1c',
+          }}>
+            Không được duyệt
+          </span>
+        </div>
+
+        <div style={{ fontSize: '24px', fontWeight: '800', letterSpacing: '3px', color: C.textMain }}>
+          {plate}
+        </div>
+
+        <div style={{ fontSize: '13px', color: C.textSub }}>
+          Ấn nút bên dưới để xem lý do và đăng ký lại.
+        </div>
+
+        <button
+          onClick={() => onViewRejected(rejectedSub)}
+          style={{
+            padding: '11px 0', width: '100%', marginTop: 'auto',
+            backgroundColor: '#b91c1c', color: 'white',
+            border: 'none', borderRadius: '10px',
+            fontSize: '13px', fontWeight: '600', cursor: 'pointer',
+          }}
+        >
+          Xem lý do &amp; Đăng ký lại →
+        </button>
+      </div>
+    )
+  }
+
+  // Chưa đăng ký
   if (!sub) {
     return (
-      <div style={cardStyle}>
+      <div style={{ ...cardBase, borderTop: `4px solid ${color}` }}>
         {typeTag}
         <div style={{ fontSize: '14px', color: C.textSub }}>Chưa đăng ký gói tháng</div>
         <div style={{ marginTop: 'auto' }}>
           <Link to="/user/monthly-ticket" style={{ textDecoration: 'none' }}>
             <button style={{
-              padding: '11px 0',
-              width: '100%',
-              backgroundColor: color,
-              color: 'white',
-              border: 'none',
-              borderRadius: '10px',
-              fontSize: '13px',
-              fontWeight: '600',
-              cursor: 'pointer',
+              padding: '11px 0', width: '100%',
+              backgroundColor: color, color: 'white',
+              border: 'none', borderRadius: '10px',
+              fontSize: '13px', fontWeight: '600', cursor: 'pointer',
             }}>
               + Đăng ký ngay
             </button>
@@ -94,8 +141,9 @@ function VehicleCard({ type, sub, isParked }) {
   const st = sub.status
 
   return (
-    <div style={cardStyle}>
+    <div style={{ ...cardBase, borderTop: `4px solid ${color}` }}>
       {typeTag}
+
       <div style={{ fontSize: '26px', fontWeight: '800', letterSpacing: '3px', color: C.textMain }}>
         {plate}
       </div>
@@ -123,10 +171,31 @@ function VehicleCard({ type, sub, isParked }) {
           Hết hạn: <strong style={{ color: C.textMain }}>{fmtDate(sub.endDate)}</strong>
         </div>
       )}
+
       {st === 'pending' && (
-        <div style={{ fontSize: '12px', color: C.textSub, fontStyle: 'italic' }}>
-          Đang chờ admin duyệt
-        </div>
+        <>
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            style={{
+              padding: '9px 0', width: '100%',
+              backgroundColor: 'transparent', color: C.accent,
+              border: `1px solid ${C.accent}`, borderRadius: '10px',
+              fontSize: '13px', fontWeight: '600', cursor: 'pointer',
+            }}
+          >
+            {expanded ? '▲ Ẩn chi tiết' : '▼ Xem thông tin đăng ký'}
+          </button>
+
+          {expanded && (
+            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <Row label="Số điện thoại" value={sub.contactPhone || '—'} />
+              <Row label="Số tháng" value={`${sub.months} tháng`} />
+              <Row label="Tổng tiền" value={fmtCurrency(sub.totalAmount)} />
+              <Row label="Thanh toán" value={sub.paymentMethod === 'bank_transfer' ? 'Chuyển khoản' : 'Tiền mặt'} />
+              <Row label="Ngày gửi" value={fmtDate(sub.createdAt)} />
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -149,6 +218,7 @@ function Stat({ title, value, note }) {
 }
 
 function DashboardUser() {
+  const navigate = useNavigate()
   const [subscriptions, setSubscriptions] = useState([])
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -170,12 +240,21 @@ function DashboardUser() {
       .finally(() => setLoading(false))
   }, [])
 
+  // Active/pending subs
   const motorbikeSub = subscriptions.find(
     (s) => s.vehicleType === 'motorbike' && ['active', 'pending'].includes(s.status)
   )
   const carSub = subscriptions.find(
     (s) => s.vehicleType === 'car' && ['active', 'pending'].includes(s.status)
   )
+
+  // Most recent rejected sub (only when no active/pending exists for that type)
+  const motorbikeRejected = !motorbikeSub
+    ? subscriptions.find((s) => s.vehicleType === 'motorbike' && s.status === 'rejected')
+    : null
+  const carRejected = !carSub
+    ? subscriptions.find((s) => s.vehicleType === 'car' && s.status === 'rejected')
+    : null
 
   const inProgressPlates = new Set(
     sessions.filter((s) => s.status === 'in_progress').map((s) => s.licensePlate)
@@ -188,6 +267,23 @@ function DashboardUser() {
   }).length
 
   const activePackages = [motorbikeSub, carSub].filter((s) => s?.status === 'active').length
+
+  const handleViewRejected = (sub) => {
+    navigate('/user/monthly-ticket', {
+      state: {
+        prefill: {
+          vehicleType: sub.vehicleType,
+          licensePlate: sub.vehicleId?.licensePlate || '',
+          phone: sub.contactPhone || '',
+          brand: sub.vehicleId?.brand || '',
+          color: sub.vehicleId?.color || '',
+          months: sub.months,
+          paymentMethod: sub.paymentMethod,
+        },
+        rejectReason: sub.notes || '',
+      },
+    })
+  }
 
   if (loading) {
     return (
@@ -215,12 +311,16 @@ function DashboardUser() {
         <VehicleCard
           type="motorbike"
           sub={motorbikeSub}
+          rejectedSub={motorbikeRejected}
           isParked={!!motorbikeSub && inProgressPlates.has(motorbikeSub.vehicleId?.licensePlate)}
+          onViewRejected={handleViewRejected}
         />
         <VehicleCard
           type="car"
           sub={carSub}
+          rejectedSub={carRejected}
           isParked={!!carSub && inProgressPlates.has(carSub.vehicleId?.licensePlate)}
+          onViewRejected={handleViewRejected}
         />
       </div>
 

@@ -16,7 +16,6 @@ function Sidebar({ type }) {
 
   const userMenus = [
     { label: 'Tổng quan', path: '/user/dashboard' },
-    { label: 'Đăng ký vé tháng', path: '/user/monthly-ticket' }, // <--- THÊM MỚI
     { label: 'Lịch sử gửi xe', path: '/user/history' },
     { label: 'Thông tin tài khoản', path: '/user/account' },
     { label: 'Lịch sử thanh toán', path: '/user/payments' },
