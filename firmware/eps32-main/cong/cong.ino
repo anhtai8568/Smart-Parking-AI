@@ -154,10 +154,16 @@ void loop() {
   }
 
   // ===== ĐÓNG BARRIER =====
-  if (currentAngle == 90 && d1 > 15 && d2 > 15) {
-    delay(1000);
+  // ===== 6. ĐÓNG BARRIER AN TOÀN =====
+  // Đóng cổng nếu khoảng cách > 15 HOẶC trả về -1 (không có vật cản)
+  bool anToanD1 = (d1 > 15 || d1 == -1);
+  bool anToanD2 = (d2 > 15 || d2 == -1);
+
+  if (currentAngle == 90 && anToanD1 && anToanD2) {
+    delay(1000); 
     myServo.write(0);
     currentAngle = 0;
+    Serial.println("Dong cong!");
   }
 
   delay(100);

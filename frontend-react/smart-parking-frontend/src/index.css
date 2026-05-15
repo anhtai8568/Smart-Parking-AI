@@ -290,6 +290,19 @@ button {
   margin-bottom: 20px;
 }
 
+.lane-split.single-gate {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.lane-split.single-gate .frame-vehicle {
+  height: 324px;
+}
+
+.lane-split.single-gate .lane-exit-plates .plate-block {
+  max-width: 220px;
+  justify-self: center;
+}
+
 .lane-entry-body {
   display: grid;
   gap: 14px;
@@ -313,6 +326,17 @@ button {
 .lane-exit-body {
   display: grid;
   gap: 14px;
+}
+
+.lane-notice {
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid #fde2c0;
+  background: #fff4e8;
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
 }
 
 .lane-exit-frames {
@@ -351,6 +375,18 @@ button {
 .plate-block {
   display: grid;
   gap: 8px;
+}
+
+.plate-input {
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: #1f2937;
+  font-weight: 700;
+  font-size: 13px;
+  text-align: center;
+  letter-spacing: 0.06em;
 }
 
 .plate-time {
@@ -422,6 +458,12 @@ button {
   background: rgba(15, 23, 42, 0.72);
   color: #f8fafc;
   z-index: 2;
+}
+
+.frame-label.accent,
+.plate-label.accent {
+  background: #f59e0b;
+  color: #1f2937;
 }
 
 .frame-media {
