@@ -17,14 +17,14 @@ import VisitorParking from '../pages/admin/VisitorParking';
 import Pricing from '../pages/admin/Pricing';
 import Reports from '../pages/admin/Reports';
 import Settings from '../pages/admin/Settings';
+import MonthlyRequests from '../pages/admin/MonthlyRequests';
 
 // Import các trang User
 import DashboardUser from '../pages/user/DashboardUser';
 import ParkingHistory from '../pages/user/ParkingHistory';
 import AccountInfo from '../pages/user/AccountInfo';
 import PaymentHistory from '../pages/user/PaymentHistory';
-import Topup from '../pages/user/Topup';
-import MonthlyTicket from '../pages/user/MonthlyTicket'; // <--- THÊM DÒNG NÀY
+import MonthlyTicket from '../pages/user/MonthlyTicket';
 
 function AppRoutes() {
   return (
@@ -50,6 +50,7 @@ function AppRoutes() {
           <Route path="users" element={<ManageUsers />} />
           <Route path="vehicles" element={<ManageVehicles />} />
           <Route path="visitors" element={<VisitorParking />} />
+          <Route path="monthly-tickets" element={<MonthlyRequests />} />
           <Route path="pricing" element={<Pricing />} />
           <Route path="reports" element={<Reports />} />
           <Route path="settings" element={<Settings />} />
@@ -73,7 +74,6 @@ function AppRoutes() {
           <Route path="history" element={<ParkingHistory />} />
           <Route path="account" element={<AccountInfo />} />
           <Route path="payments" element={<PaymentHistory />} />
-          <Route path="topup" element={<Topup />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/login" replace />} />
