@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import api from '../../services/api';
 
 const Login = () => {
-  const [formData, setFormData] = useState({ email: '', password: '' });
+  const [formData, setFormData] = useState({ username: '', password: '' });
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
 
   const containerStyle = {
     minHeight: '100vh',
@@ -73,6 +77,47 @@ const Login = () => {
     marginTop: '10px'
   };
 
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setError('');
+
+    const username = formData.username.trim();
+    if (!username || !formData.password) {
+      setError('Vui lòng nhập tên đăng nhập và mật khẩu');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await api.post('/api/auth/login', {
+        username,
+        password: formData.password,
+      });
+
+      const payload = response.data?.data;
+      if (!payload?.token || !payload?.user) {
+        throw new Error('Dữ liệu đăng nhập không hợp lệ');
+      }
+
+      localStorage.setItem('token', payload.token);
+      localStorage.setItem('currentUser', JSON.stringify(payload.user));
+
+      if (payload.user.role === 'admin') {
+        navigate('/admin');
+      } else {
+        navigate('/user');
+      }
+    } catch (requestError) {
+      const message =
+        requestError?.response?.data?.message ||
+        requestError?.message ||
+        'Đăng nhập thất bại';
+      setError(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div style={containerStyle}>
       <div style={cardStyle}>
@@ -80,28 +125,48 @@ const Login = () => {
           <div style={logoStyle}>P</div>
           <h1 style={{ color: 'white', margin: 0, fontSize: '20px', letterSpacing: '2px' }}>SMART PARKING AI</h1>
         </div>
-        
+
         <div style={{ padding: '30px' }}>
           <h2 style={{ color: '#d1d5db', textAlign: 'center', fontSize: '18px', marginBottom: '25px', fontStyle: 'italic' }}>Hệ Thống Đăng Nhập</h2>
-          
-          <label style={{ color: '#93c5fd', fontSize: '14px' }}>Email</label>
-          <input 
-            type="email" 
-            placeholder="example@gmail.com" 
-            style={inputStyle}
-            onChange={(e) => setFormData({...formData, email: e.target.value})}
-          />
-          
-          <label style={{ color: '#93c5fd', fontSize: '14px' }}>Mật khẩu</label>
-          <input 
-            type="password" 
-            placeholder="••••••••" 
-            style={inputStyle}
-            onChange={(e) => setFormData({...formData, password: e.target.value})}
-          />
-          
-          <button style={buttonStyle}>ĐĂNG NHẬP</button>
-          
+
+          <form onSubmit={handleSubmit}>
+            <label style={{ color: '#93c5fd', fontSize: '14px' }}>Tên đăng nhập</label>
+            <input
+              type="text"
+              placeholder="admin"
+              style={inputStyle}
+              value={formData.username}
+              onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+              autoComplete="username"
+            />
+
+            <label style={{ color: '#93c5fd', fontSize: '14px' }}>Mật khẩu</label>
+            <input
+              type="password"
+              placeholder="••••••••"
+              style={inputStyle}
+              value={formData.password}
+              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              autoComplete="current-password"
+            />
+
+            {error && (
+              <div style={{ color: '#fca5a5', fontSize: '13px', marginBottom: '12px' }}>
+                {error}
+              </div>
+            )}
+
+            <button style={buttonStyle} type="submit" disabled={isLoading}>
+              {isLoading ? 'ĐANG ĐĂNG NHẬP...' : 'ĐĂNG NHẬP'}
+            </button>
+          </form>
+
+          <div style={{ textAlign: 'center', marginTop: '18px' }}>
+            <Link to="/forgot-password" style={{ color: '#93c5fd', fontSize: '13px', textDecoration: 'none' }}>
+              Quên mật khẩu?
+            </Link>
+          </div>
+
           <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: '14px', marginTop: '25px' }}>
             Chưa có tài khoản? <Link to="/register" style={{ color: '#60a5fa', fontWeight: 'bold', textDecoration: 'none' }}>Đăng ký ngay</Link>
           </p>

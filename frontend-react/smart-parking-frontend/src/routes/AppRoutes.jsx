@@ -6,6 +6,8 @@ import ProtectedRoute from '../components/common/ProtectedRoute';
 // Import các trang xác thực
 import Login from '../pages/auth/Login';
 import Register from '../pages/auth/Register';
+import ForgotPassword from '../pages/auth/ForgotPassword';
+import ResetPassword from '../pages/auth/ResetPassword';
 
 // Import các trang Admin
 import DashboardAdmin from '../pages/admin/DashboardAdmin';
@@ -31,6 +33,8 @@ function AppRoutes() {
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
 
         {/* Admin Routes */}
         <Route
@@ -62,9 +66,9 @@ function AppRoutes() {
         >
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<DashboardUser />} />
-          
+
           {/* ĐĂNG KÝ VÉ THÁNG */}
-          <Route path="monthly-ticket" element={<MonthlyTicket />} /> 
+          <Route path="monthly-ticket" element={<MonthlyTicket />} />
 
           <Route path="history" element={<ParkingHistory />} />
           <Route path="account" element={<AccountInfo />} />
