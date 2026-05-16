@@ -34,25 +34,28 @@ function fmtCurrency(value) {
 
 const MonthlyTicket = () => {
   const location = useLocation();
-  const { prefill, rejectReason } = location.state || {};
+  const { prefill, rejectReason, renewalTarget, viewPendingType } = location.state || {};
 
   const [currentUser] = useState(() => JSON.parse(localStorage.getItem('currentUser') || '{}'));
 
-  const [vehicleType, setVehicleType] = useState(prefill?.vehicleType || 'motorbike');
+  const [vehicleType, setVehicleType] = useState(prefill?.vehicleType || renewalTarget?.vehicleType || viewPendingType || 'motorbike');
   const [months, setMonths] = useState(prefill?.months || 1);
   const [formData, setFormData] = useState({
     licensePlate: prefill?.licensePlate || '',
     phone: prefill?.phone || '',
     brand: prefill?.brand || '',
     color: prefill?.color || '',
-    paymentMethod: prefill?.paymentMethod || 'bank_transfer',
+    paymentMethod: renewalTarget ? 'sepay' : prefill?.paymentMethod || 'sepay',
   });
   const [pricing, setPricing] = useState(null);
   const [existingSubs, setExistingSubs] = useState([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [info, setInfo] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [paymentInfo, setPaymentInfo] = useState(null);
+  const [pendingSubId, setPendingSubId] = useState(null);
 
   const applyAutoSelect = (subs) => {
     const hasMotorbike = subs.some((s) => s.vehicleType === 'motorbike' && ['active', 'pending'].includes(s.status));
@@ -74,7 +77,18 @@ const MonthlyTicket = () => {
         setPricing(pricingRes.data?.data || null);
         const subs = subsRes.data?.data || [];
         setExistingSubs(subs);
-        if (!prefill) applyAutoSelect(subs);
+
+        const sepayUnpaid = subs.find(
+          (s) => s.status === 'pending' && s.paymentMethod === 'sepay' && s.paymentStatus !== 'paid' && s.paymentQrUrl
+        );
+        if (sepayUnpaid) {
+          setPaymentInfo({ qrUrl: sepayUnpaid.paymentQrUrl, code: sepayUnpaid.paymentCode, amount: sepayUnpaid.totalAmount, bank: null, account: null });
+          setPendingSubId(sepayUnpaid._id);
+          setInfo('Quét mã QR bên dưới để thanh toán — hệ thống tự xác nhận sau khi nhận tiền.');
+          setVehicleType(sepayUnpaid.vehicleType || 'motorbike');
+        } else if (!prefill && !viewPendingType) {
+          applyAutoSelect(subs);
+        }
       } catch (err) {
         setError(err?.response?.data?.message || 'Không tải được dữ liệu');
       } finally {
@@ -90,8 +104,6 @@ const MonthlyTicket = () => {
   const carSub = existingSubs.find(
     (s) => s.vehicleType === 'car' && ['active', 'pending'].includes(s.status)
   );
-  const bothRegistered = !!motorbikeSub && !!carSub;
-
   const selectedSub = vehicleType === 'motorbike' ? motorbikeSub : carSub;
   const isAlreadyRegistered = !!selectedSub;
 
@@ -106,15 +118,43 @@ const MonthlyTicket = () => {
 
   const handleTypeSelect = (type) => {
     const sub = type === 'motorbike' ? motorbikeSub : carSub;
-    if (sub) return;
     setVehicleType(type);
     setError('');
     setSuccess('');
+    if (!sub) {
+      setInfo('');
+      setPaymentInfo(null);
+      setPendingSubId(null);
+    }
   };
+
+  useEffect(() => {
+    if (!pendingSubId || !currentUser.username) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await api.get('/api/subscriptions/me', { params: { username: currentUser.username } });
+        const subs = res.data?.data || [];
+        const sub = subs.find((s) => s._id === pendingSubId);
+        if (sub?.paymentStatus === 'paid') {
+          clearInterval(interval);
+          setPaymentInfo(null);
+          setPendingSubId(null);
+          setInfo('');
+          setSuccess('Thanh toán thành công! Đơn đăng ký đang chờ admin phê duyệt.');
+          setExistingSubs(subs);
+          applyAutoSelect(subs);
+        }
+      } catch { /* ignore polling errors */ }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [pendingSubId, currentUser.username]);
 
   const handleSubmit = async () => {
     setError('');
     setSuccess('');
+    setInfo('');
+    setPaymentInfo(null);
+    setPendingSubId(null);
 
     if (isAlreadyRegistered) {
       setError('Bạn đã có gói tháng cho loại xe này.');
@@ -131,9 +171,10 @@ const MonthlyTicket = () => {
 
     if (!currentUser?.username) { setError('Vui lòng đăng nhập lại để tiếp tục'); return; }
 
+    const selectedMethod = formData.paymentMethod;
     setIsSubmitting(true);
     try {
-      await api.post('/api/subscriptions', {
+      const res = await api.post('/api/subscriptions', {
         username: currentUser.username,
         licensePlate,
         vehicleType,
@@ -141,16 +182,25 @@ const MonthlyTicket = () => {
         color: formData.color.trim(),
         phone,
         months,
-        paymentMethod: formData.paymentMethod,
+        paymentMethod: selectedMethod,
       });
 
-      setSuccess('Đã gửi yêu cầu đăng ký vé tháng. Vui lòng chờ duyệt.');
-      setFormData({ licensePlate: '', phone: '', brand: '', color: '', paymentMethod: formData.paymentMethod });
+      const subId = res.data?.data?._id;
+      const hasSepayQr = Boolean(res.data?.payment && subId);
+
+      if (hasSepayQr) {
+        setPaymentInfo(res.data.payment);
+        setPendingSubId(subId);
+        setInfo('Quét mã QR bên dưới để thanh toán — hệ thống tự xác nhận sau khi nhận tiền.');
+      } else {
+        setSuccess('Đã gửi yêu cầu đăng ký vé tháng. Vui lòng chờ duyệt.');
+      }
+      setFormData({ licensePlate: '', phone: '', brand: '', color: '', paymentMethod: selectedMethod });
 
       const subsRes = await api.get('/api/subscriptions/me', { params: { username: currentUser.username } });
       const refreshed = subsRes.data?.data || [];
       setExistingSubs(refreshed);
-      applyAutoSelect(refreshed);
+      if (!hasSepayQr) applyAutoSelect(refreshed);
     } catch (err) {
       setError(err?.response?.data?.message || 'Không thể gửi yêu cầu đăng ký');
     } finally {
@@ -179,41 +229,68 @@ const MonthlyTicket = () => {
     const price = isMotorbike ? pricing?.monthlyPriceMotorbike : pricing?.monthlyPriceCar;
     const isSelected = vehicleType === type && !sub;
     const isDisabled = !!sub;
+    const isFocused = isSelected || (vehicleType === type && isDisabled);
 
     const cardStyle = {
       padding: '24px',
       borderRadius: '20px',
-      border: isSelected
-        ? `2px solid ${accentColor}`
-        : isDisabled
-        ? `1px solid ${colors.border}`
-        : `1px solid ${colors.border}`,
-      backgroundColor: isSelected
-        ? `${accentColor}0d`
-        : isDisabled
-        ? '#fafafa'
-        : '#ffffff',
-      cursor: isDisabled ? 'default' : 'pointer',
-      transform: isSelected ? 'translateY(-4px)' : 'none',
+      border: isFocused ? `2px solid ${accentColor}` : `1px solid ${colors.border}`,
+      backgroundColor: isFocused ? `${accentColor}0d` : isDisabled ? '#fafafa' : '#ffffff',
+      cursor: 'pointer',
+      transform: isFocused ? 'translateY(-4px)' : 'none',
       transition: 'all 0.25s ease',
-      boxShadow: isSelected ? `0 8px 20px rgba(0,0,0,0.07)` : 'none',
+      boxShadow: isFocused ? `0 8px 20px rgba(0,0,0,0.07)` : 'none',
       position: 'relative',
       overflow: 'hidden',
       opacity: isDisabled ? 0.92 : 1,
     };
 
     if (sub) {
+      const isSepayUnpaid = sub.paymentMethod === 'sepay' && sub.paymentStatus !== 'paid';
+
+      const handleShowQr = () => {
+        if (!sub.paymentQrUrl) return;
+        setPaymentInfo({
+          qrUrl: sub.paymentQrUrl,
+          code: sub.paymentCode,
+          amount: sub.totalAmount,
+          bank: null,
+          account: null,
+        });
+        setPendingSubId(sub._id);
+        setInfo('Quét mã QR bên dưới để thanh toán — hệ thống tự xác nhận sau khi nhận tiền.');
+        setVehicleType(type);
+      };
+
+      const handleCancelUnpaid = async () => {
+        if (!window.confirm('Hủy đơn đăng ký này và tạo đơn mới?')) return;
+        try {
+          await api.delete(`/api/subscriptions/${sub._id}/cancel-unpaid`, {
+            data: { username: currentUser.username },
+          });
+          setPaymentInfo(null);
+          setPendingSubId(null);
+          setInfo('');
+          setSuccess('');
+          const subsRes = await api.get('/api/subscriptions/me', { params: { username: currentUser.username } });
+          const refreshed = subsRes.data?.data || [];
+          setExistingSubs(refreshed);
+          setVehicleType(type);
+        } catch (err) {
+          setError(err?.response?.data?.message || 'Không thể hủy đơn');
+        }
+      };
+
       return (
-        <div key={type} style={cardStyle}>
-          <div style={{ marginBottom: '10px' }}>
+        <div key={type} style={cardStyle} onClick={() => handleTypeSelect(type)}>
+          <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '15px', fontWeight: '700', color: accentColor }}>{label}</span>
             <span style={{
-              marginLeft: '10px',
               padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600',
-              backgroundColor: STATUS_BG[sub.status] || '#f3f4f6',
-              color: STATUS_COLOR[sub.status] || '#6b7280',
+              backgroundColor: isSepayUnpaid ? '#fef3c7' : (STATUS_BG[sub.status] || '#f3f4f6'),
+              color: isSepayUnpaid ? '#b45309' : (STATUS_COLOR[sub.status] || '#6b7280'),
             }}>
-              {STATUS_LABEL[sub.status] || sub.status}
+              {isSepayUnpaid ? 'Chờ thanh toán' : (STATUS_LABEL[sub.status] || sub.status)}
             </span>
           </div>
           <div style={{ fontSize: '22px', fontWeight: '800', letterSpacing: '2px', color: colors.textMain, marginBottom: '8px' }}>
@@ -227,8 +304,26 @@ const MonthlyTicket = () => {
               Hết hạn: <strong style={{ color: colors.textMain }}>{fmtDate(sub.endDate)}</strong>
             </div>
           )}
-          {sub.status === 'pending' && (
-            <div style={{ fontSize: '12px', color: colors.textSub, fontStyle: 'italic' }}>
+          {isSepayUnpaid && (
+            <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {sub.paymentQrUrl && (
+                <button onClick={handleShowQr} style={{
+                  padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: '600',
+                  backgroundColor: accentColor, color: '#fff', border: 'none', cursor: 'pointer',
+                }}>
+                  Xem QR thanh toán
+                </button>
+              )}
+              <button onClick={handleCancelUnpaid} style={{
+                padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: '600',
+                backgroundColor: '#fff', color: '#b91c1c', border: '1px solid #fca5a5', cursor: 'pointer',
+              }}>
+                Hủy & đăng ký lại
+              </button>
+            </div>
+          )}
+          {sub.status === 'pending' && !isSepayUnpaid && (
+            <div style={{ fontSize: '12px', color: colors.textSub, fontStyle: 'italic', marginTop: '6px' }}>
               Đang chờ admin duyệt
             </div>
           )}
@@ -274,38 +369,107 @@ const MonthlyTicket = () => {
           {renderPlanCard('car')}
         </div>
 
-        {bothRegistered ? (
-          <div style={{ padding: '30px', borderRadius: '16px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', textAlign: 'center', color: '#15803d', fontWeight: '600' }}>
-            Bạn đã đăng ký đủ cả 2 gói tháng (xe máy và ô tô).
+        {/* Thông báo + QR — luôn hiển thị */}
+        {(success || info || paymentInfo) && (
+          <div style={{ backgroundColor: '#f1f5f9', padding: '24px 30px', borderRadius: '20px', border: `1px solid ${colors.border}`, marginBottom: '16px' }}>
+            {success && <div style={{ marginBottom: info || paymentInfo ? '16px' : 0, color: '#15803d', fontWeight: '600' }}>{success}</div>}
+            {info && <div style={{ marginBottom: paymentInfo ? '16px' : 0, padding: '12px 16px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', color: '#1d4ed8', fontWeight: '500', fontSize: '14px' }}>{info}</div>}
+            {paymentInfo && pendingSubId && (() => {
+              const pendingSub = existingSubs.find((s) => s._id === pendingSubId);
+              if (!pendingSub) return null;
+              const payMethodLabel = pendingSub.paymentMethod === 'sepay' ? 'SePay QR' : pendingSub.paymentMethod === 'bank_transfer' ? 'Chuyển khoản' : 'Tiền mặt';
+              const vehicleTypeLabel = pendingSub.vehicleType === 'motorbike' ? 'Xe máy' : 'Ô tô';
+              return (
+                <div style={{ backgroundColor: '#fff', border: `1px solid ${colors.border}`, borderRadius: '14px', padding: '18px 20px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: '700', color: colors.textMain, marginBottom: '2px' }}>Thông tin đăng ký</div>
+                  {[
+                    ['Biển số xe', pendingSub.vehicleId?.licensePlate || '—'],
+                    ['Loại xe', vehicleTypeLabel],
+                    ['Số tháng', `${pendingSub.months} tháng`],
+                    ['Tổng tiền', fmtCurrency(pendingSub.totalAmount)],
+                    ['Thanh toán', payMethodLabel],
+                    ['SĐT liên hệ', pendingSub.contactPhone || '—'],
+                    ['Ngày đăng ký', fmtDate(pendingSub.createdAt)],
+                  ].map(([label, value]) => (
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', borderBottom: `1px solid ${colors.border}`, paddingBottom: '8px' }}>
+                      <span style={{ color: colors.textSub }}>{label}</span>
+                      <span style={{ fontWeight: '600', color: colors.textMain }}>{value}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+            {paymentInfo && (
+              <div style={{ padding: '28px', backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '16px', textAlign: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h3 style={{ margin: 0, color: '#0369a1', fontSize: '16px', fontWeight: '700' }}>Quét mã QR để thanh toán</h3>
+                  <button onClick={() => { setPaymentInfo(null); setPendingSubId(null); setInfo(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontSize: '20px', lineHeight: 1 }}>×</button>
+                </div>
+                <img src={paymentInfo.qrUrl} alt="QR thanh toán SePay" style={{ width: '220px', height: '220px', borderRadius: '12px', border: '2px solid #7dd3fc', display: 'block', margin: '0 auto 20px' }} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '14px', textAlign: 'left', backgroundColor: '#fff', padding: '16px', borderRadius: '12px' }}>
+                  {paymentInfo.bank && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#64748b' }}>Ngân hàng</span><strong>{paymentInfo.bank}</strong></div>}
+                  {paymentInfo.account && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#64748b' }}>Số tài khoản</span><strong>{paymentInfo.account}</strong></div>}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: '#64748b' }}>Nội dung chuyển khoản</span>
+                    <strong style={{ color: '#2563eb', backgroundColor: '#dbeafe', padding: '3px 12px', borderRadius: '6px', letterSpacing: '1px', fontSize: '15px' }}>{paymentInfo.code}</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '10px' }}>
+                    <span style={{ color: '#64748b' }}>Số tiền</span>
+                    <strong style={{ color: '#16a34a', fontSize: '18px' }}>{fmtCurrency(paymentInfo.amount)}</strong>
+                  </div>
+                </div>
+                <p style={{ marginTop: '14px', fontSize: '12px', color: '#64748b', fontStyle: 'italic', lineHeight: '1.6' }}>
+                  Nhập đúng nội dung chuyển khoản để hệ thống tự động xác nhận.<br />
+                  Sau khi thanh toán, admin sẽ phê duyệt đơn đăng ký của bạn.
+                </p>
+              </div>
+            )}
           </div>
-        ) : (
+        )}
+
+        {/* Form đăng ký — chỉ hiện khi không có QR đang mở */}
+        {!paymentInfo && (
           <div style={{ backgroundColor: '#f1f5f9', padding: '30px', borderRadius: '20px', border: `1px solid ${colors.border}` }}>
-            {isAlreadyRegistered ? (
+            {isAlreadyRegistered && selectedSub?.status === 'pending' ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '15px', fontWeight: '700', color: colors.textMain }}>Thông tin đơn đăng ký</span>
+                  <span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600', backgroundColor: '#fef3c7', color: '#b45309' }}>Đang chờ admin duyệt</span>
+                </div>
+                <div style={{ backgroundColor: '#fff', border: `1px solid ${colors.border}`, borderRadius: '14px', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {[
+                    ['Biển số xe', selectedSub.vehicleId?.licensePlate || '—'],
+                    ['Loại xe', selectedSub.vehicleType === 'motorbike' ? 'Xe máy' : 'Ô tô'],
+                    ['Số tháng', `${selectedSub.months} tháng`],
+                    ['Tổng tiền', fmtCurrency(selectedSub.totalAmount)],
+                    ['Thanh toán', selectedSub.paymentMethod === 'sepay' ? 'SePay QR' : selectedSub.paymentMethod === 'bank_transfer' ? 'Chuyển khoản' : 'Tiền mặt'],
+                    ['SĐT liên hệ', selectedSub.contactPhone || '—'],
+                    ['Ngày đăng ký', fmtDate(selectedSub.createdAt)],
+                  ].map(([label, value]) => (
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', borderBottom: `1px solid ${colors.border}`, paddingBottom: '10px' }}>
+                      <span style={{ color: colors.textSub }}>{label}</span>
+                      <span style={{ fontWeight: '600', color: colors.textMain }}>{value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : motorbikeSub && carSub ? (
+              <div style={{ padding: '30px', borderRadius: '16px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', textAlign: 'center', color: '#15803d', fontWeight: '600' }}>
+                Bạn đã đăng ký đủ cả 2 gói tháng (xe máy và ô tô).
+              </div>
+            ) : isAlreadyRegistered ? (
               <div style={{ textAlign: 'center', padding: '20px', color: colors.textSub }}>
-                Bạn đã có gói tháng cho loại xe này. Vui lòng chọn loại xe khác chưa đăng ký.
+                Bạn đã có gói tháng đang hoạt động cho loại xe này.
               </div>
             ) : (
               <>
                 {rejectReason && (
-                  <div style={{
-                    marginBottom: '24px',
-                    padding: '16px 20px',
-                    backgroundColor: '#fff1f2',
-                    border: '1px solid #fecdd3',
-                    borderRadius: '14px',
-                  }}>
-                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#b91c1c', marginBottom: '6px' }}>
-                      Yêu cầu trước của bạn không được duyệt
-                    </div>
-                    <div style={{ fontSize: '13px', color: '#7f1d1d', lineHeight: '1.6' }}>
-                      Lý do: {rejectReason}
-                    </div>
-                    <div style={{ fontSize: '12px', color: '#b45309', marginTop: '8px', fontStyle: 'italic' }}>
-                      Vui lòng kiểm tra lại thông tin và gửi yêu cầu mới.
-                    </div>
+                  <div style={{ marginBottom: '24px', padding: '16px 20px', backgroundColor: '#fff1f2', border: '1px solid #fecdd3', borderRadius: '14px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#b91c1c', marginBottom: '6px' }}>Yêu cầu trước của bạn không được duyệt</div>
+                    <div style={{ fontSize: '13px', color: '#7f1d1d', lineHeight: '1.6' }}>Lý do: {rejectReason}</div>
+                    <div style={{ fontSize: '12px', color: '#b45309', marginTop: '8px', fontStyle: 'italic' }}>Vui lòng kiểm tra lại thông tin và gửi yêu cầu mới.</div>
                   </div>
                 )}
-
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '25px' }}>
                   <div>
                     <label style={{ color: colors.textMain, fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase' }}>Biển Số Xe</label>
@@ -334,13 +498,13 @@ const MonthlyTicket = () => {
                   </div>
                   <div>
                     <label style={{ color: colors.textMain, fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase' }}>Phương Thức Thanh Toán</label>
-                    <select style={inputStyle} value={formData.paymentMethod} onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value })}>
-                      <option value="bank_transfer">Chuyển khoản</option>
+                    <select style={inputStyle} value={formData.paymentMethod} onChange={(e) => { setFormData({ ...formData, paymentMethod: e.target.value }); setPaymentInfo(null); }}>
+                      <option value="sepay">SePay QR (tự động xác nhận)</option>
+                      <option value="bank_transfer">Chuyển khoản thủ công</option>
                       <option value="cash">Tiền mặt</option>
                     </select>
                   </div>
                 </div>
-
                 <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#fff', borderRadius: '12px', border: `1px solid ${colors.border}` }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '8px' }}>
                     <span style={{ color: colors.textSub }}>Đơn giá / tháng</span>
@@ -351,10 +515,7 @@ const MonthlyTicket = () => {
                     <strong style={{ color: colors.accent, fontSize: '18px' }}>{fmtCurrency(totalAmount)}</strong>
                   </div>
                 </div>
-
                 {error && <div style={{ marginTop: '16px', color: '#b91c1c', fontWeight: '600' }}>{error}</div>}
-                {success && <div style={{ marginTop: '16px', color: '#15803d', fontWeight: '600' }}>{success}</div>}
-
                 <button
                   style={{
                     width: '100%', padding: '18px',

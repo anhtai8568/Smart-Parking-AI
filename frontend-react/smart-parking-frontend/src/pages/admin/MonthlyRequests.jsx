@@ -19,7 +19,15 @@ function MonthlyRequests() {
     const mapPaymentMethod = (value) => {
         if (value === 'cash') return 'Tiền mặt'
         if (value === 'bank_transfer') return 'Chuyển khoản'
+        if (value === 'sepay') return 'SePay QR'
         return '-'
+    }
+
+    const mapPaymentStatus = (method, status) => {
+        if (method !== 'sepay') return null
+        return status === 'paid'
+            ? { label: 'Đã nhận tiền', color: '#15803d', bg: '#dcfce7' }
+            : { label: 'Chờ thanh toán', color: '#b45309', bg: '#fef3c7' }
     }
 
     const mapStatus = (value) => {
@@ -47,12 +55,14 @@ function MonthlyRequests() {
                 user: item.userId?.fullName || item.userId?.username || '-',
                 phone: item.userId?.phone || item.contactPhone || '-',
                 licensePlate: item.vehicleId?.licensePlate || '-',
-                vehicleType: mapVehicleType(item.vehicleId?.vehicleType),
+                vehicleType: mapVehicleType(item.vehicleId?.vehicleType || item.vehicleType),
                 months: `${item.months} tháng`,
                 totalAmount: formatCurrency(item.totalAmount),
-                paymentMethod: mapPaymentMethod(item.paymentMethod),
+                paymentMethod: item.paymentMethod,
                 status: mapStatus(item.status),
                 rawStatus: item.status,
+                rawPaymentMethod: item.paymentMethod,
+                rawPaymentStatus: item.paymentStatus,
             }))
 
             setItems(rows)
@@ -112,36 +122,55 @@ function MonthlyRequests() {
         { key: 'vehicleType', title: 'Loại xe' },
         { key: 'months', title: 'Thời hạn' },
         { key: 'totalAmount', title: 'Tổng tiền' },
-        { key: 'paymentMethod', title: 'Thanh toán' },
+        { key: 'paymentMethodDisplay', title: 'Thanh toán' },
         { key: 'status', title: 'Trạng thái' },
         { key: 'action', title: 'Xử lý' },
     ]
 
-    const rowsWithActions = items.map((item) => ({
-        ...item,
-        action: item.rawStatus === 'pending' ? (
-            <div style={{ display: 'flex', gap: '8px' }}>
-                <button
-                    className="primary-btn"
-                    style={{ height: '38px' }}
-                    disabled={isLoading}
-                    onClick={() => handleApprove(item.id, 'bank_transfer')}
-                >
-                    Duyệt
-                </button>
-                <button
-                    className="secondary-btn"
-                    style={{ height: '38px' }}
-                    disabled={isLoading}
-                    onClick={() => handleReject(item.id)}
-                >
-                    Từ chối
-                </button>
-            </div>
-        ) : (
-            '-'
-        ),
-    }))
+    const rowsWithActions = items.map((item) => {
+        const paymentBadge = mapPaymentStatus(item.rawPaymentMethod, item.rawPaymentStatus)
+        const canApprove = item.rawPaymentMethod !== 'sepay' || item.rawPaymentStatus === 'paid'
+
+        return {
+            ...item,
+            paymentMethodDisplay: (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span>{mapPaymentMethod(item.rawPaymentMethod)}</span>
+                    {paymentBadge && (
+                        <span style={{
+                            fontSize: '11px', fontWeight: '600',
+                            padding: '2px 8px', borderRadius: '12px',
+                            color: paymentBadge.color, backgroundColor: paymentBadge.bg,
+                            display: 'inline-block', width: 'fit-content',
+                        }}>
+                            {paymentBadge.label}
+                        </span>
+                    )}
+                </div>
+            ),
+            action: item.rawStatus === 'pending' ? (
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <button
+                        className="primary-btn"
+                        style={{ height: '38px', opacity: canApprove ? 1 : 0.45, cursor: canApprove ? 'pointer' : 'not-allowed' }}
+                        disabled={isLoading || !canApprove}
+                        title={!canApprove ? 'Chờ SePay xác nhận thanh toán' : ''}
+                        onClick={() => handleApprove(item.id, item.rawPaymentMethod)}
+                    >
+                        Duyệt
+                    </button>
+                    <button
+                        className="secondary-btn"
+                        style={{ height: '38px' }}
+                        disabled={isLoading}
+                        onClick={() => handleReject(item.id)}
+                    >
+                        Từ chối
+                    </button>
+                </div>
+            ) : '-',
+        }
+    })
 
     return (
         <div>

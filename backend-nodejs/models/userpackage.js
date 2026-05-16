@@ -40,13 +40,37 @@ const userPackageSchema = new mongoose.Schema(
         },
         paymentMethod: {
             type: String,
-            enum: ['cash', 'bank_transfer'],
+            enum: ['cash', 'bank_transfer', 'sepay'],
             default: 'bank_transfer',
         },
         paymentStatus: {
             type: String,
             enum: ['unpaid', 'paid'],
             default: 'unpaid',
+        },
+        paymentCode: {
+            type: String,
+            default: null,
+        },
+        paymentProvider: {
+            type: String,
+            default: null,
+        },
+        paymentQrUrl: {
+            type: String,
+            default: null,
+        },
+        paymentTransactionId: {
+            type: String,
+            default: null,
+        },
+        paymentReference: {
+            type: String,
+            default: null,
+        },
+        paymentReceivedAt: {
+            type: Date,
+            default: null,
         },
         contactPhone: {
             type: String,
@@ -75,6 +99,28 @@ const userPackageSchema = new mongoose.Schema(
             ref: 'User',
             default: null,
         },
+        renewal: {
+            code: {
+                type: String,
+                default: null,
+            },
+            months: {
+                type: Number,
+                default: null,
+            },
+            amount: {
+                type: Number,
+                default: null,
+            },
+            requestedAt: {
+                type: Date,
+                default: null,
+            },
+            paidAt: {
+                type: Date,
+                default: null,
+            },
+        },
     },
     {
         timestamps: true,
@@ -86,6 +132,8 @@ userPackageSchema.index({ userId: 1, status: 1 })
 userPackageSchema.index({ userId: 1, vehicleType: 1, status: 1 })
 userPackageSchema.index({ vehicleId: 1, status: 1 })
 userPackageSchema.index({ endDate: 1 })
+userPackageSchema.index({ paymentCode: 1 }, { unique: true, partialFilterExpression: { paymentCode: { $type: 'string' } } })
+userPackageSchema.index({ 'renewal.code': 1 }, { unique: true, partialFilterExpression: { 'renewal.code': { $type: 'string' } } })
 
 const UserPackage = mongoose.model('UserPackage', userPackageSchema)
 

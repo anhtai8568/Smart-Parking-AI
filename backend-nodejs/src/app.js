@@ -6,11 +6,18 @@ import parkingRoutes from './routes/parking.routes.js'
 import userRoutes from './routes/user.routes.js'
 import pricingRoutes from './routes/pricing.routes.js'
 import subscriptionRoutes from './routes/subscription.routes.js'
+import sepayRoutes from './routes/sepay.routes.js'
 
 const app = express()
 
 app.use(cors())
-app.use(express.json())
+app.use(express.json({
+    verify: (req, _res, buf) => {
+        if (req.originalUrl && req.originalUrl.startsWith('/api/sepay/webhook')) {
+            req.rawBody = buf.toString()
+        }
+    },
+}))
 
 app.get('/', (_req, res) => {
     res.json({
@@ -32,6 +39,7 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/auth', authRoutes)
 app.use('/api/pricing', pricingRoutes)
+app.use('/api/sepay', sepayRoutes)
 app.use('/api/subscriptions', subscriptionRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/vehicles', vehicleRoutes)

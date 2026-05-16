@@ -53,8 +53,7 @@ function Row({ label, value }) {
   )
 }
 
-function VehicleCard({ type, sub, rejectedSub, isParked, onViewRejected }) {
-  const [expanded, setExpanded] = useState(false)
+function VehicleCard({ type, sub, rejectedSub, isParked, onViewRejected, onViewInfo }) {
   const isMotorbike = type === 'motorbike'
   const label = isMotorbike ? 'Xe Máy' : 'Ô Tô'
   const color = isMotorbike ? C.accent : C.orange
@@ -140,6 +139,7 @@ function VehicleCard({ type, sub, rejectedSub, isParked, onViewRejected }) {
   const brand = sub.vehicleId?.brand || ''
   const vehicleColor = sub.vehicleId?.color || ''
   const st = sub.status
+  const isSepayUnpaid = st === 'pending' && sub.paymentMethod === 'sepay' && sub.paymentStatus !== 'paid'
 
   return (
     <div style={{ ...cardBase, borderTop: `4px solid ${color}` }}>
@@ -147,9 +147,10 @@ function VehicleCard({ type, sub, rejectedSub, isParked, onViewRejected }) {
         {typeTag}
         <span style={{
           padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600',
-          backgroundColor: STATUS_BG[st] || '#f3f4f6', color: STATUS_COLOR[st] || '#6b7280',
+          backgroundColor: isSepayUnpaid ? '#fef3c7' : (STATUS_BG[st] || '#f3f4f6'),
+          color: isSepayUnpaid ? '#b45309' : (STATUS_COLOR[st] || '#6b7280'),
         }}>
-          {STATUS_LABEL[st] || st}
+          {isSepayUnpaid ? 'Chờ thanh toán' : (STATUS_LABEL[st] || st)}
         </span>
       </div>
 
@@ -180,29 +181,19 @@ function VehicleCard({ type, sub, rejectedSub, isParked, onViewRejected }) {
       )}
 
       {st === 'pending' && (
-        <>
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            style={{
-              padding: '9px 0', width: '100%',
-              backgroundColor: 'transparent', color: C.accent,
-              border: `1px solid ${C.accent}`, borderRadius: '10px',
-              fontSize: '13px', fontWeight: '600', cursor: 'pointer',
-            }}
-          >
-            {expanded ? '▲ Ẩn chi tiết' : '▼ Xem thông tin đăng ký'}
-          </button>
-
-          {expanded && (
-            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <Row label="Số điện thoại" value={sub.contactPhone || '—'} />
-              <Row label="Số tháng" value={`${sub.months} tháng`} />
-              <Row label="Tổng tiền" value={fmtCurrency(sub.totalAmount)} />
-              <Row label="Thanh toán" value={sub.paymentMethod === 'bank_transfer' ? 'Chuyển khoản' : 'Tiền mặt'} />
-              <Row label="Ngày gửi" value={fmtDate(sub.createdAt)} />
-            </div>
-          )}
-        </>
+        <button
+          onClick={() => onViewInfo(type)}
+          style={{
+            padding: '11px 0', width: '100%',
+            backgroundColor: isSepayUnpaid ? color : 'transparent',
+            color: isSepayUnpaid ? 'white' : color,
+            border: isSepayUnpaid ? 'none' : `1px solid ${color}`,
+            borderRadius: '10px',
+            fontSize: '13px', fontWeight: '600', cursor: 'pointer',
+          }}
+        >
+          {isSepayUnpaid ? 'Tiếp tục thanh toán QR →' : 'Xem thông tin đơn đăng ký →'}
+        </button>
       )}
     </div>
   )
@@ -292,6 +283,10 @@ function DashboardUser() {
     })
   }
 
+  const handleViewInfo = (vehicleType) => {
+    navigate('/user/monthly-ticket', { state: { viewPendingType: vehicleType } })
+  }
+
   if (loading) {
     return (
       <div style={{ padding: '60px', textAlign: 'center', color: C.textSub, fontFamily: "'Inter', sans-serif" }}>
@@ -312,6 +307,7 @@ function DashboardUser() {
           rejectedSub={motorbikeRejected}
           isParked={!!motorbikeSub && inProgressPlates.has(motorbikeSub.vehicleId?.licensePlate)}
           onViewRejected={handleViewRejected}
+          onViewInfo={handleViewInfo}
         />
         <VehicleCard
           type="car"
@@ -319,6 +315,7 @@ function DashboardUser() {
           rejectedSub={carRejected}
           isParked={!!carSub && inProgressPlates.has(carSub.vehicleId?.licensePlate)}
           onViewRejected={handleViewRejected}
+          onViewInfo={handleViewInfo}
         />
       </div>
 
