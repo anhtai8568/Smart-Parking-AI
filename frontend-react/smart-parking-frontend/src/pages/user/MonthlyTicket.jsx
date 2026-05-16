@@ -32,6 +32,17 @@ function fmtCurrency(value) {
   return `${Number(value || 0).toLocaleString('vi-VN')}đ`;
 }
 
+function daysUntil(date) {
+  return Math.ceil((new Date(date) - Date.now()) / 86400000);
+}
+
+function canRenew(sub) {
+  if (!sub) return false;
+  if (sub.status === 'expired') return true;
+  if (sub.status === 'active' && sub.endDate) return daysUntil(sub.endDate) <= 30;
+  return false;
+}
+
 const MonthlyTicket = () => {
   const location = useLocation();
   const { prefill, rejectReason, renewalTarget, viewPendingType } = location.state || {};
@@ -56,6 +67,9 @@ const MonthlyTicket = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [paymentInfo, setPaymentInfo] = useState(null);
   const [pendingSubId, setPendingSubId] = useState(null);
+  const [renewalSub, setRenewalSub] = useState(null);
+  const [renewalMonths, setRenewalMonths] = useState(1);
+  const [isRenewalPoll, setIsRenewalPoll] = useState(false);
 
   const applyAutoSelect = (subs) => {
     const hasMotorbike = subs.some((s) => s.vehicleType === 'motorbike' && ['active', 'pending'].includes(s.status));
@@ -78,16 +92,36 @@ const MonthlyTicket = () => {
         const subs = subsRes.data?.data || [];
         setExistingSubs(subs);
 
-        const sepayUnpaid = subs.find(
-          (s) => s.status === 'pending' && s.paymentMethod === 'sepay' && s.paymentStatus !== 'paid' && s.paymentQrUrl
-        );
-        if (sepayUnpaid) {
-          setPaymentInfo({ qrUrl: sepayUnpaid.paymentQrUrl, code: sepayUnpaid.paymentCode, amount: sepayUnpaid.totalAmount, bank: null, account: null });
-          setPendingSubId(sepayUnpaid._id);
-          setInfo('Quét mã QR bên dưới để thanh toán — hệ thống tự xác nhận sau khi nhận tiền.');
-          setVehicleType(sepayUnpaid.vehicleType || 'motorbike');
-        } else if (!prefill && !viewPendingType) {
-          applyAutoSelect(subs);
+        if (renewalTarget) {
+          const targetSub = subs.find((s) => s._id === renewalTarget._id);
+          if (targetSub) {
+            setRenewalSub(targetSub);
+            setVehicleType(targetSub.vehicleType || 'motorbike');
+            if (targetSub.renewal?.code && !targetSub.renewal?.paidAt && targetSub.renewal?.qrUrl) {
+              setPaymentInfo({
+                qrUrl: targetSub.renewal.qrUrl,
+                code: targetSub.renewal.code,
+                amount: targetSub.renewal.amount,
+                bank: null,
+                account: null,
+              });
+              setPendingSubId(targetSub._id);
+              setIsRenewalPoll(true);
+              setInfo('Quét mã QR bên dưới để thanh toán gia hạn — hệ thống tự xác nhận sau khi nhận tiền.');
+            }
+          }
+        } else {
+          const sepayUnpaid = subs.find(
+            (s) => s.status === 'pending' && s.paymentMethod === 'sepay' && s.paymentStatus !== 'paid' && s.paymentQrUrl
+          );
+          if (sepayUnpaid) {
+            setPaymentInfo({ qrUrl: sepayUnpaid.paymentQrUrl, code: sepayUnpaid.paymentCode, amount: sepayUnpaid.totalAmount, bank: null, account: null });
+            setPendingSubId(sepayUnpaid._id);
+            setInfo('Quét mã QR bên dưới để thanh toán — hệ thống tự xác nhận sau khi nhận tiền.');
+            setVehicleType(sepayUnpaid.vehicleType || 'motorbike');
+          } else if (!prefill && !viewPendingType) {
+            applyAutoSelect(subs);
+          }
         }
       } catch (err) {
         setError(err?.response?.data?.message || 'Không tải được dữ liệu');
@@ -104,6 +138,13 @@ const MonthlyTicket = () => {
   const carSub = existingSubs.find(
     (s) => s.vehicleType === 'car' && ['active', 'pending'].includes(s.status)
   );
+  const motorbikeExpiredSub = !motorbikeSub
+    ? existingSubs.find((s) => s.vehicleType === 'motorbike' && s.status === 'expired')
+    : null;
+  const carExpiredSub = !carSub
+    ? existingSubs.find((s) => s.vehicleType === 'car' && s.status === 'expired')
+    : null;
+
   const selectedSub = vehicleType === 'motorbike' ? motorbikeSub : carSub;
   const isAlreadyRegistered = !!selectedSub;
 
@@ -116,15 +157,85 @@ const MonthlyTicket = () => {
 
   const totalAmount = useMemo(() => pricePerMonth * months, [pricePerMonth, months]);
 
+  const renewalPricePerMonth = useMemo(() => {
+    if (!pricing || !renewalSub) return 0;
+    return renewalSub.vehicleType === 'motorbike'
+      ? Number(pricing.monthlyPriceMotorbike || 0)
+      : Number(pricing.monthlyPriceCar || 0);
+  }, [pricing, renewalSub]);
+
+  const renewalTotalAmount = useMemo(() => renewalPricePerMonth * renewalMonths, [renewalPricePerMonth, renewalMonths]);
+
   const handleTypeSelect = (type) => {
     const sub = type === 'motorbike' ? motorbikeSub : carSub;
     setVehicleType(type);
     setError('');
     setSuccess('');
+    setRenewalSub(null);
+    setIsRenewalPoll(false);
     if (!sub) {
       setInfo('');
       setPaymentInfo(null);
       setPendingSubId(null);
+    }
+  };
+
+  const handleStartRenewal = (sub) => {
+    setRenewalSub(sub);
+    setRenewalMonths(1);
+    setError('');
+    setSuccess('');
+    if (sub.renewal?.code && !sub.renewal?.paidAt && sub.renewal?.qrUrl) {
+      setPaymentInfo({
+        qrUrl: sub.renewal.qrUrl,
+        code: sub.renewal.code,
+        amount: sub.renewal.amount,
+        bank: null,
+        account: null,
+      });
+      setPendingSubId(sub._id);
+      setIsRenewalPoll(true);
+      setInfo('Quét mã QR bên dưới để thanh toán gia hạn — hệ thống tự xác nhận sau khi nhận tiền.');
+    } else {
+      setPaymentInfo(null);
+      setPendingSubId(null);
+      setIsRenewalPoll(false);
+      setInfo('');
+    }
+  };
+
+  const handleSubmitRenewal = async () => {
+    if (!renewalSub) return;
+    setError('');
+    setIsSubmitting(true);
+    try {
+      const res = await api.post(`/api/subscriptions/${renewalSub._id}/renew`, {
+        username: currentUser.username,
+        months: renewalMonths,
+        paymentMethod: 'sepay',
+      });
+      const payment = res.data?.payment;
+      if (payment) {
+        setPaymentInfo({
+          qrUrl: payment.qrUrl,
+          code: payment.code,
+          amount: payment.amount,
+          bank: payment.bank,
+          account: payment.account,
+        });
+        setPendingSubId(renewalSub._id);
+        setIsRenewalPoll(true);
+        setInfo('Quét mã QR bên dưới để thanh toán gia hạn — hệ thống tự xác nhận sau khi nhận tiền.');
+        const subsRes = await api.get('/api/subscriptions/me', { params: { username: currentUser.username } });
+        const refreshed = subsRes.data?.data || [];
+        setExistingSubs(refreshed);
+        const freshSub = refreshed.find((s) => s._id === renewalSub._id);
+        if (freshSub) setRenewalSub(freshSub);
+      }
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Không thể tạo yêu cầu gia hạn');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -135,19 +246,32 @@ const MonthlyTicket = () => {
         const res = await api.get('/api/subscriptions/me', { params: { username: currentUser.username } });
         const subs = res.data?.data || [];
         const sub = subs.find((s) => s._id === pendingSubId);
-        if (sub?.paymentStatus === 'paid') {
-          clearInterval(interval);
-          setPaymentInfo(null);
-          setPendingSubId(null);
-          setInfo('');
-          setSuccess('Thanh toán thành công! Đơn đăng ký đang chờ admin phê duyệt.');
-          setExistingSubs(subs);
-          applyAutoSelect(subs);
+        if (isRenewalPoll) {
+          if (sub?.renewal?.paidAt) {
+            clearInterval(interval);
+            setPaymentInfo(null);
+            setPendingSubId(null);
+            setIsRenewalPoll(false);
+            setRenewalSub(null);
+            setInfo('');
+            setSuccess('Gia hạn thành công! Gói tháng của bạn đã được gia hạn tự động.');
+            setExistingSubs(subs);
+          }
+        } else {
+          if (sub?.paymentStatus === 'paid') {
+            clearInterval(interval);
+            setPaymentInfo(null);
+            setPendingSubId(null);
+            setInfo('');
+            setSuccess('Thanh toán thành công! Đơn đăng ký đang chờ admin phê duyệt.');
+            setExistingSubs(subs);
+            applyAutoSelect(subs);
+          }
         }
       } catch { /* ignore polling errors */ }
     }, 3000);
     return () => clearInterval(interval);
-  }, [pendingSubId, currentUser.username]);
+  }, [pendingSubId, currentUser.username, isRenewalPoll]);
 
   const handleSubmit = async () => {
     setError('');
@@ -226,27 +350,29 @@ const MonthlyTicket = () => {
     const label = isMotorbike ? 'Gói Xe Máy' : 'Gói Ô Tô';
     const accentColor = isMotorbike ? colors.accent : colors.orange;
     const sub = isMotorbike ? motorbikeSub : carSub;
+    const expiredSub = isMotorbike ? motorbikeExpiredSub : carExpiredSub;
     const price = isMotorbike ? pricing?.monthlyPriceMotorbike : pricing?.monthlyPriceCar;
-    const isSelected = vehicleType === type && !sub;
-    const isDisabled = !!sub;
-    const isFocused = isSelected || (vehicleType === type && isDisabled);
+    const isFocused = vehicleType === type;
 
     const cardStyle = {
       padding: '24px',
       borderRadius: '20px',
       border: isFocused ? `2px solid ${accentColor}` : `1px solid ${colors.border}`,
-      backgroundColor: isFocused ? `${accentColor}0d` : isDisabled ? '#fafafa' : '#ffffff',
+      backgroundColor: isFocused ? `${accentColor}0d` : (sub || expiredSub) ? '#fafafa' : '#ffffff',
       cursor: 'pointer',
       transform: isFocused ? 'translateY(-4px)' : 'none',
       transition: 'all 0.25s ease',
       boxShadow: isFocused ? `0 8px 20px rgba(0,0,0,0.07)` : 'none',
       position: 'relative',
       overflow: 'hidden',
-      opacity: isDisabled ? 0.92 : 1,
     };
 
+    // Active or pending sub
     if (sub) {
       const isSepayUnpaid = sub.paymentMethod === 'sepay' && sub.paymentStatus !== 'paid';
+      const renewalPending = sub.renewal?.code && !sub.renewal?.paidAt;
+      const showRenewButton = sub.status === 'active' && canRenew(sub) && !renewalPending;
+      const daysLeft = sub.status === 'active' && sub.endDate ? daysUntil(sub.endDate) : null;
 
       const handleShowQr = () => {
         if (!sub.paymentQrUrl) return;
@@ -300,21 +426,26 @@ const MonthlyTicket = () => {
             <div style={{ fontSize: '13px', color: colors.textSub, marginBottom: '8px' }}>{sub.vehicleId.brand}</div>
           )}
           {sub.status === 'active' && sub.endDate && (
-            <div style={{ fontSize: '13px', color: colors.textSub }}>
-              Hết hạn: <strong style={{ color: colors.textMain }}>{fmtDate(sub.endDate)}</strong>
+            <div style={{ fontSize: '13px', color: daysLeft !== null && daysLeft <= 7 ? '#b91c1c' : colors.textSub }}>
+              Hết hạn: <strong style={{ color: daysLeft !== null && daysLeft <= 7 ? '#b91c1c' : colors.textMain }}>{fmtDate(sub.endDate)}</strong>
+              {daysLeft !== null && daysLeft <= 30 && (
+                <span style={{ marginLeft: '6px', fontSize: '12px', color: daysLeft <= 7 ? '#b91c1c' : '#b45309' }}>
+                  ({daysLeft <= 0 ? 'Hôm nay' : `còn ${daysLeft} ngày`})
+                </span>
+              )}
             </div>
           )}
           {isSepayUnpaid && (
             <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               {sub.paymentQrUrl && (
-                <button onClick={handleShowQr} style={{
+                <button onClick={(e) => { e.stopPropagation(); handleShowQr(); }} style={{
                   padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: '600',
                   backgroundColor: accentColor, color: '#fff', border: 'none', cursor: 'pointer',
                 }}>
                   Xem QR thanh toán
                 </button>
               )}
-              <button onClick={handleCancelUnpaid} style={{
+              <button onClick={(e) => { e.stopPropagation(); handleCancelUnpaid(); }} style={{
                 padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: '600',
                 backgroundColor: '#fff', color: '#b91c1c', border: '1px solid #fca5a5', cursor: 'pointer',
               }}>
@@ -327,10 +458,72 @@ const MonthlyTicket = () => {
               Đang chờ admin duyệt
             </div>
           )}
+          {showRenewButton && (
+            <div style={{ marginTop: '10px' }}>
+              <button onClick={(e) => { e.stopPropagation(); handleStartRenewal(sub); }} style={{
+                padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: '600',
+                backgroundColor: accentColor, color: '#fff', border: 'none', cursor: 'pointer',
+              }}>
+                Gia hạn →
+              </button>
+            </div>
+          )}
+          {sub.status === 'active' && renewalPending && (
+            <div style={{ marginTop: '10px' }}>
+              <button onClick={(e) => { e.stopPropagation(); handleStartRenewal(sub); }} style={{
+                padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: '600',
+                backgroundColor: accentColor, color: '#fff', border: 'none', cursor: 'pointer',
+              }}>
+                Xem QR gia hạn
+              </button>
+            </div>
+          )}
         </div>
       );
     }
 
+    // Expired sub — eligible for renewal
+    if (expiredSub) {
+      const renewalPending = expiredSub.renewal?.code && !expiredSub.renewal?.paidAt;
+      return (
+        <div key={type} style={cardStyle} onClick={() => handleTypeSelect(type)}>
+          <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '15px', fontWeight: '700', color: accentColor }}>{label}</span>
+            <span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600', backgroundColor: '#f3f4f6', color: '#6b7280' }}>
+              Hết hạn
+            </span>
+          </div>
+          <div style={{ fontSize: '22px', fontWeight: '800', letterSpacing: '2px', color: colors.textMain, marginBottom: '8px' }}>
+            {expiredSub.vehicleId?.licensePlate || '—'}
+          </div>
+          {expiredSub.endDate && (
+            <div style={{ fontSize: '13px', color: '#b91c1c', marginBottom: '4px' }}>
+              Đã hết hạn: {fmtDate(expiredSub.endDate)}
+            </div>
+          )}
+          <div style={{ marginTop: '10px' }}>
+            {renewalPending ? (
+              <button onClick={(e) => { e.stopPropagation(); handleStartRenewal(expiredSub); }} style={{
+                padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: '600',
+                backgroundColor: accentColor, color: '#fff', border: 'none', cursor: 'pointer',
+              }}>
+                Xem QR gia hạn
+              </button>
+            ) : (
+              <button onClick={(e) => { e.stopPropagation(); handleStartRenewal(expiredSub); }} style={{
+                padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: '600',
+                backgroundColor: accentColor, color: '#fff', border: 'none', cursor: 'pointer',
+              }}>
+                Gia hạn ngay →
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // No sub — show pricing card
+    const isSelected = vehicleType === type;
     return (
       <div key={type} style={cardStyle} onClick={() => handleTypeSelect(type)}>
         {isSelected && (
@@ -369,12 +562,12 @@ const MonthlyTicket = () => {
           {renderPlanCard('car')}
         </div>
 
-        {/* Thông báo + QR — luôn hiển thị */}
+        {/* Thông báo + QR */}
         {(success || info || paymentInfo) && (
           <div style={{ backgroundColor: '#f1f5f9', padding: '24px 30px', borderRadius: '20px', border: `1px solid ${colors.border}`, marginBottom: '16px' }}>
             {success && <div style={{ marginBottom: info || paymentInfo ? '16px' : 0, color: '#15803d', fontWeight: '600' }}>{success}</div>}
             {info && <div style={{ marginBottom: paymentInfo ? '16px' : 0, padding: '12px 16px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', color: '#1d4ed8', fontWeight: '500', fontSize: '14px' }}>{info}</div>}
-            {paymentInfo && pendingSubId && (() => {
+            {paymentInfo && !isRenewalPoll && pendingSubId && (() => {
               const pendingSub = existingSubs.find((s) => s._id === pendingSubId);
               if (!pendingSub) return null;
               const payMethodLabel = pendingSub.paymentMethod === 'sepay' ? 'SePay QR' : pendingSub.paymentMethod === 'bank_transfer' ? 'Chuyển khoản' : 'Tiền mặt';
@@ -402,8 +595,15 @@ const MonthlyTicket = () => {
             {paymentInfo && (
               <div style={{ padding: '28px', backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '16px', textAlign: 'center' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <h3 style={{ margin: 0, color: '#0369a1', fontSize: '16px', fontWeight: '700' }}>Quét mã QR để thanh toán</h3>
-                  <button onClick={() => { setPaymentInfo(null); setPendingSubId(null); setInfo(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontSize: '20px', lineHeight: 1 }}>×</button>
+                  <h3 style={{ margin: 0, color: '#0369a1', fontSize: '16px', fontWeight: '700' }}>
+                    {isRenewalPoll ? 'Quét mã QR để thanh toán gia hạn' : 'Quét mã QR để thanh toán'}
+                  </h3>
+                  <button onClick={() => {
+                    setPaymentInfo(null);
+                    setPendingSubId(null);
+                    if (isRenewalPoll) setIsRenewalPoll(false);
+                    setInfo('');
+                  }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontSize: '20px', lineHeight: 1 }}>×</button>
                 </div>
                 <img src={paymentInfo.qrUrl} alt="QR thanh toán SePay" style={{ width: '220px', height: '220px', borderRadius: '12px', border: '2px solid #7dd3fc', display: 'block', margin: '0 auto 20px' }} />
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '14px', textAlign: 'left', backgroundColor: '#fff', padding: '16px', borderRadius: '12px' }}>
@@ -420,17 +620,78 @@ const MonthlyTicket = () => {
                 </div>
                 <p style={{ marginTop: '14px', fontSize: '12px', color: '#64748b', fontStyle: 'italic', lineHeight: '1.6' }}>
                   Nhập đúng nội dung chuyển khoản để hệ thống tự động xác nhận.<br />
-                  Sau khi thanh toán, admin sẽ phê duyệt đơn đăng ký của bạn.
+                  {isRenewalPoll
+                    ? 'Sau khi thanh toán, gói tháng của bạn sẽ được gia hạn tự động.'
+                    : 'Sau khi thanh toán, admin sẽ phê duyệt đơn đăng ký của bạn.'}
                 </p>
               </div>
             )}
           </div>
         )}
 
-        {/* Form đăng ký — chỉ hiện khi không có QR đang mở */}
+        {/* Form section */}
         {!paymentInfo && (
           <div style={{ backgroundColor: '#f1f5f9', padding: '30px', borderRadius: '20px', border: `1px solid ${colors.border}` }}>
-            {isAlreadyRegistered && selectedSub?.status === 'pending' ? (
+            {renewalSub ? (
+              // Renewal form
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '15px', fontWeight: '700', color: colors.textMain }}>Gia hạn gói tháng</span>
+                  <button onClick={() => setRenewalSub(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: colors.textSub, fontSize: '20px', lineHeight: 1 }}>×</button>
+                </div>
+                <div style={{ backgroundColor: '#fff', border: `1px solid ${colors.border}`, borderRadius: '14px', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {[
+                    ['Biển số xe', renewalSub.vehicleId?.licensePlate || '—'],
+                    ['Loại xe', renewalSub.vehicleType === 'motorbike' ? 'Xe máy' : 'Ô tô'],
+                    ['Trạng thái', STATUS_LABEL[renewalSub.status] || renewalSub.status],
+                    renewalSub.endDate ? ['Hết hạn', fmtDate(renewalSub.endDate)] : null,
+                  ].filter(Boolean).map(([label, value]) => (
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', borderBottom: `1px solid ${colors.border}`, paddingBottom: '8px' }}>
+                      <span style={{ color: colors.textSub }}>{label}</span>
+                      <span style={{ fontWeight: '600', color: colors.textMain }}>{value}</span>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <label style={{ color: colors.textMain, fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase' }}>Số Tháng Gia Hạn</label>
+                  <select style={inputStyle} value={renewalMonths} onChange={(e) => setRenewalMonths(Number(e.target.value))}>
+                    <option value={1}>01 Tháng</option>
+                    <option value={3}>03 Tháng</option>
+                    <option value={6}>06 Tháng</option>
+                    <option value={12}>12 Tháng</option>
+                  </select>
+                </div>
+                <div style={{ padding: '16px', backgroundColor: '#fff', borderRadius: '12px', border: `1px solid ${colors.border}` }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '8px' }}>
+                    <span style={{ color: colors.textSub }}>Đơn giá / tháng</span>
+                    <strong>{fmtCurrency(renewalPricePerMonth)}</strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px' }}>
+                    <span style={{ color: colors.textSub }}>Tổng thanh toán ({renewalMonths} tháng)</span>
+                    <strong style={{ color: colors.accent, fontSize: '18px' }}>{fmtCurrency(renewalTotalAmount)}</strong>
+                  </div>
+                </div>
+                <div style={{ fontSize: '12px', color: colors.textSub, padding: '10px 14px', backgroundColor: '#eff6ff', borderRadius: '10px', border: '1px solid #bfdbfe' }}>
+                  Gia hạn qua SePay QR — hệ thống tự động xác nhận sau khi nhận tiền.
+                </div>
+                {error && <div style={{ color: '#b91c1c', fontWeight: '600' }}>{error}</div>}
+                <button
+                  style={{
+                    width: '100%', padding: '18px',
+                    backgroundColor: colors.accent, color: 'white',
+                    border: 'none', borderRadius: '12px',
+                    fontWeight: 'bold', fontSize: '16px',
+                    cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                    opacity: isSubmitting ? 0.7 : 1,
+                    boxShadow: '0 4px 14px rgba(37,99,235,0.35)',
+                  }}
+                  disabled={isSubmitting}
+                  onClick={handleSubmitRenewal}
+                >
+                  {isSubmitting ? 'ĐANG TẠO QR...' : 'XÁC NHẬN GIA HẠN — THANH TOÁN QR'}
+                </button>
+              </div>
+            ) : isAlreadyRegistered && selectedSub?.status === 'pending' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontSize: '15px', fontWeight: '700', color: colors.textMain }}>Thông tin đơn đăng ký</span>

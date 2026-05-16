@@ -592,6 +592,7 @@ export async function createRenewalPayment(req, res) {
             code: paymentCode,
             months: renewalMonths,
             amount: totalAmount,
+            qrUrl: paymentQrUrl,
             requestedAt: new Date(),
             paidAt: null,
         }

@@ -112,6 +112,10 @@ const userPackageSchema = new mongoose.Schema(
                 type: Number,
                 default: null,
             },
+            qrUrl: {
+                type: String,
+                default: null,
+            },
             requestedAt: {
                 type: Date,
                 default: null,

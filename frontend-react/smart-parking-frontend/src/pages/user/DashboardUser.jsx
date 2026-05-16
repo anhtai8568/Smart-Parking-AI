@@ -44,6 +44,17 @@ function fmtCurrency(value) {
   return `${Number(value || 0).toLocaleString('vi-VN')}đ`
 }
 
+function daysUntil(date) {
+  return Math.ceil((new Date(date) - Date.now()) / 86400000)
+}
+
+function canRenew(sub) {
+  if (!sub) return false
+  if (sub.status === 'expired') return true
+  if (sub.status === 'active' && sub.endDate) return daysUntil(sub.endDate) <= 30
+  return false
+}
+
 function Row({ label, value }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
@@ -53,7 +64,7 @@ function Row({ label, value }) {
   )
 }
 
-function VehicleCard({ type, sub, rejectedSub, isParked, onViewRejected, onViewInfo }) {
+function VehicleCard({ type, sub, rejectedSub, isParked, onViewRejected, onViewInfo, onRenew }) {
   const isMotorbike = type === 'motorbike'
   const label = isMotorbike ? 'Xe Máy' : 'Ô Tô'
   const color = isMotorbike ? C.accent : C.orange
@@ -174,11 +185,19 @@ function VehicleCard({ type, sub, rejectedSub, isParked, onViewRejected, onViewI
         </div>
       )}
 
-      {st === 'active' && sub.endDate && (
-        <div style={{ fontSize: '13px', color: C.textSub }}>
-          Hết hạn: <strong style={{ color: C.textMain }}>{fmtDate(sub.endDate)}</strong>
-        </div>
-      )}
+      {st === 'active' && sub.endDate && (() => {
+        const days = daysUntil(sub.endDate)
+        return (
+          <div style={{ fontSize: '13px', color: days <= 7 ? '#b91c1c' : C.textSub }}>
+            Hết hạn: <strong style={{ color: days <= 7 ? '#b91c1c' : C.textMain }}>{fmtDate(sub.endDate)}</strong>
+            {days <= 30 && (
+              <span style={{ marginLeft: '6px', color: days <= 7 ? '#b91c1c' : '#b45309' }}>
+                ({days <= 0 ? 'Hôm nay' : `còn ${days} ngày`})
+              </span>
+            )}
+          </div>
+        )
+      })()}
 
       {st === 'pending' && (
         <button
@@ -193,6 +212,20 @@ function VehicleCard({ type, sub, rejectedSub, isParked, onViewRejected, onViewI
           }}
         >
           {isSepayUnpaid ? 'Tiếp tục thanh toán QR →' : 'Xem thông tin đơn đăng ký →'}
+        </button>
+      )}
+
+      {canRenew(sub) && (
+        <button
+          onClick={() => onRenew(sub)}
+          style={{
+            padding: '11px 0', width: '100%',
+            backgroundColor: color, color: 'white',
+            border: 'none', borderRadius: '10px',
+            fontSize: '13px', fontWeight: '600', cursor: 'pointer',
+          }}
+        >
+          {sub.renewal?.code && !sub.renewal?.paidAt ? 'Xem QR gia hạn →' : 'Gia hạn gói tháng →'}
         </button>
       )}
     </div>
@@ -287,6 +320,10 @@ function DashboardUser() {
     navigate('/user/monthly-ticket', { state: { viewPendingType: vehicleType } })
   }
 
+  const handleRenew = (sub) => {
+    navigate('/user/monthly-ticket', { state: { renewalTarget: { _id: sub._id, vehicleType: sub.vehicleType } } })
+  }
+
   if (loading) {
     return (
       <div style={{ padding: '60px', textAlign: 'center', color: C.textSub, fontFamily: "'Inter', sans-serif" }}>
@@ -308,6 +345,7 @@ function DashboardUser() {
           isParked={!!motorbikeSub && inProgressPlates.has(motorbikeSub.vehicleId?.licensePlate)}
           onViewRejected={handleViewRejected}
           onViewInfo={handleViewInfo}
+          onRenew={handleRenew}
         />
         <VehicleCard
           type="car"
@@ -316,6 +354,7 @@ function DashboardUser() {
           isParked={!!carSub && inProgressPlates.has(carSub.vehicleId?.licensePlate)}
           onViewRejected={handleViewRejected}
           onViewInfo={handleViewInfo}
+          onRenew={handleRenew}
         />
       </div>
 
