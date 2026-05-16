@@ -5,21 +5,17 @@ function Sidebar({ type }) {
 
   const adminMenus = [
     { label: 'Tổng quan', path: '/admin/dashboard' },
-    { label: 'Quản lý người dùng', path: '/admin/users' },
-    { label: 'Quản lý xe vào/ra', path: '/admin/vehicles' },
-    { label: 'Khách vãng lai', path: '/admin/visitors' },
     { label: 'Duyệt vé tháng', path: '/admin/monthly-tickets' },
+    { label: 'Quản lý người dùng', path: '/admin/users' },
+    { label: 'Lịch sử xe vào/ra', path: '/admin/parking-history' },
     { label: 'Giá vé', path: '/admin/pricing' },
-    { label: 'Báo cáo', path: '/admin/reports' },
-    { label: 'Cài đặt', path: '/admin/settings' },
   ]
 
   const userMenus = [
     { label: 'Tổng quan', path: '/user/dashboard' },
-    { label: 'Đăng ký vé tháng', path: '/user/monthly-ticket' }, // <--- THÊM MỚI
     { label: 'Lịch sử gửi xe', path: '/user/history' },
-    { label: 'Thông tin tài khoản', path: '/user/account' },
     { label: 'Lịch sử thanh toán', path: '/user/payments' },
+    { label: 'Thông tin tài khoản', path: '/user/account' },
   ]
 
   const menus = type === 'admin' ? adminMenus : userMenus

@@ -4,7 +4,15 @@ import UserPackage from '../../models/userpackage.js'
 import Vehicle from '../../models/vehicle.js'
 
 const VEHICLE_TYPES = ['car', 'motorbike']
-const PAYMENT_METHODS = ['cash', 'bank_transfer']
+const PAYMENT_METHODS = ['cash', 'bank_transfer', 'sepay']
+const SEPAY_ACCOUNT = process.env.SEPAY_ACCOUNT || ''
+const SEPAY_BANK_CODE = process.env.SEPAY_BANK_CODE || ''
+const SEPAY_QR_BASE_URL = process.env.SEPAY_QR_BASE_URL || 'https://qr.sepay.vn/img'
+const SEPAY_QR_TEMPLATE = process.env.SEPAY_QR_TEMPLATE || ''
+const SEPAY_PAYMENT_PREFIX = (process.env.SEPAY_PAYMENT_PREFIX || 'DH').toUpperCase()
+const SEPAY_PAYMENT_CODE_MIN = Number(process.env.SEPAY_PAYMENT_CODE_MIN || 6)
+const SEPAY_PAYMENT_CODE_MAX = Number(process.env.SEPAY_PAYMENT_CODE_MAX || 8)
+const RENEWAL_WINDOW_DAYS = Number(process.env.RENEWAL_WINDOW_DAYS || 30)
 
 function parseMonths(value) {
     const parsed = Number(value)
@@ -18,6 +26,59 @@ function addMonths(date, months) {
     const result = new Date(date)
     result.setMonth(result.getMonth() + months)
     return result
+}
+
+function isSepayConfigured() {
+    return Boolean(SEPAY_ACCOUNT && SEPAY_BANK_CODE)
+}
+
+function buildVietQrUrl({ amount, code }) {
+    const params = new URLSearchParams()
+    params.set('acc', SEPAY_ACCOUNT)
+    if (SEPAY_BANK_CODE) {
+        params.set('bank', SEPAY_BANK_CODE)
+    }
+    if (amount) {
+        params.set('amount', String(amount))
+    }
+    if (code) {
+        params.set('des', code)
+    }
+    if (SEPAY_QR_TEMPLATE) {
+        params.set('template', SEPAY_QR_TEMPLATE)
+    }
+
+    return `${SEPAY_QR_BASE_URL}?${params.toString()}`
+}
+
+function clampPaymentCodeLength() {
+    const min = Number.isFinite(SEPAY_PAYMENT_CODE_MIN) ? SEPAY_PAYMENT_CODE_MIN : 6
+    const max = Number.isFinite(SEPAY_PAYMENT_CODE_MAX) ? SEPAY_PAYMENT_CODE_MAX : min
+    if (min >= max) return min
+    return min + Math.floor(Math.random() * (max - min + 1))
+}
+
+function generatePaymentCode() {
+    const length = clampPaymentCodeLength()
+    let digits = ''
+    for (let i = 0; i < length; i += 1) {
+        digits += Math.floor(Math.random() * 10).toString()
+    }
+    return `${SEPAY_PAYMENT_PREFIX}${digits}`
+}
+
+async function generateUniquePaymentCode() {
+    for (let i = 0; i < 6; i += 1) {
+        const code = generatePaymentCode()
+        const existing = await UserPackage.findOne({
+            $or: [{ paymentCode: code }, { 'renewal.code': code }],
+        })
+        if (!existing) {
+            return code
+        }
+    }
+
+    throw new Error('Failed to generate payment code')
 }
 
 async function resolveUser({ userId, username }) {
@@ -201,6 +262,18 @@ export async function createSubscription(req, res) {
         const totalAmount = pricePerMonth * months
 
         const method = PAYMENT_METHODS.includes(paymentMethod) ? paymentMethod : 'bank_transfer'
+        const shouldUseSepay = method === 'sepay'
+        if (shouldUseSepay && !isSepayConfigured()) {
+            return res.status(500).json({
+                status: 'error',
+                message: 'SePay is not configured',
+            })
+        }
+
+        const paymentCode = shouldUseSepay ? await generateUniquePaymentCode() : null
+        const paymentQrUrl = shouldUseSepay
+            ? buildVietQrUrl({ amount: totalAmount, code: paymentCode })
+            : null
 
         const subscription = await UserPackage.create({
             userId: user._id,
@@ -212,6 +285,9 @@ export async function createSubscription(req, res) {
             totalAmount,
             paymentMethod: method,
             paymentStatus: 'unpaid',
+            paymentCode: paymentCode || null,
+            paymentProvider: shouldUseSepay ? 'sepay' : null,
+            paymentQrUrl: paymentQrUrl || null,
             contactPhone: normalizedPhone,
             status: 'pending',
             startDate: null,
@@ -236,10 +312,23 @@ export async function createSubscription(req, res) {
             await user.save()
         }
 
-        return res.status(201).json({
+        const response = {
             status: 'success',
             data: subscription,
-        })
+        }
+
+        if (shouldUseSepay) {
+            response.payment = {
+                method: 'sepay',
+                code: paymentCode,
+                amount: totalAmount,
+                qrUrl: paymentQrUrl,
+                bank: SEPAY_BANK_CODE,
+                account: SEPAY_ACCOUNT,
+            }
+        }
+
+        return res.status(201).json(response)
     } catch (error) {
         return res.status(500).json({
             status: 'error',
@@ -294,7 +383,7 @@ export async function listMySubscriptions(req, res) {
         const items = await UserPackage.find(query)
             .sort({ createdAt: -1 })
             .limit(Math.min(Number(limit) || 50, 200))
-            .populate('vehicleId', 'licensePlate vehicleType')
+            .populate('vehicleId', 'licensePlate vehicleType brand color')
 
         return res.json({
             status: 'success',
@@ -363,10 +452,23 @@ export async function approveSubscription(req, res) {
         const start = startDate ? new Date(startDate) : new Date()
         const end = addMonths(start, subscription.months)
 
-        const method = PAYMENT_METHODS.includes(paymentMethod) ? paymentMethod : subscription.paymentMethod
+        const method = subscription.paymentMethod === 'sepay'
+            ? 'sepay'
+            : PAYMENT_METHODS.includes(paymentMethod)
+                ? paymentMethod
+                : subscription.paymentMethod
+
+        if (subscription.paymentMethod === 'sepay' && subscription.paymentStatus !== 'paid') {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Chưa nhận được thanh toán SePay, không thể duyệt',
+            })
+        }
 
         subscription.status = 'active'
-        subscription.paymentStatus = 'paid'
+        if (subscription.paymentStatus !== 'paid') {
+            subscription.paymentStatus = 'paid'
+        }
         subscription.paymentMethod = method
         subscription.startDate = start
         subscription.endDate = end
@@ -383,6 +485,173 @@ export async function approveSubscription(req, res) {
             status: 'error',
             message: error.message,
         })
+    }
+}
+
+export async function createRenewalPayment(req, res) {
+    try {
+        const { id } = req.params
+        const { userId, username, months, paymentMethod } = req.body
+
+        const renewalMonths = parseMonths(months)
+        if (!renewalMonths) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid months',
+            })
+        }
+
+        const user = await resolveUser({ userId, username })
+        if (!user) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'User is required',
+            })
+        }
+
+        const subscription = await UserPackage.findById(id)
+        if (!subscription) {
+            return res.status(404).json({
+                status: 'error',
+                message: 'Subscription not found',
+            })
+        }
+
+        if (subscription.userId.toString() !== user._id.toString()) {
+            return res.status(403).json({
+                status: 'error',
+                message: 'Not allowed to renew this subscription',
+            })
+        }
+
+        if (!['active', 'expired'].includes(subscription.status)) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Subscription is not eligible for renewal',
+            })
+        }
+
+        if (subscription.renewal?.code && !subscription.renewal?.paidAt) {
+            return res.status(409).json({
+                status: 'error',
+                message: 'A renewal request is already pending',
+            })
+        }
+
+        const endDate = subscription.endDate ? new Date(subscription.endDate) : null
+        if (subscription.status === 'active' && endDate) {
+            const daysLeft = Math.ceil((endDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000))
+            if (daysLeft > RENEWAL_WINDOW_DAYS) {
+                return res.status(400).json({
+                    status: 'error',
+                    message: 'Renewal is only available within 30 days of expiry',
+                })
+            }
+        }
+
+        const method = PAYMENT_METHODS.includes(paymentMethod) ? paymentMethod : 'sepay'
+        if (method !== 'sepay') {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Renewal only supports SePay payments',
+            })
+        }
+
+        if (!isSepayConfigured()) {
+            return res.status(500).json({
+                status: 'error',
+                message: 'SePay is not configured',
+            })
+        }
+
+        const vehicleType = await resolvePackageVehicleType(subscription)
+        if (!vehicleType) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Vehicle type is required for renewal',
+            })
+        }
+
+        const activePolicy = await PricingPolicy.findOne({ isActive: true }).sort({ effectiveFrom: -1 })
+        if (!activePolicy) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Pricing policy is not configured',
+            })
+        }
+
+        const pricePerMonth = vehicleType === 'motorbike'
+            ? activePolicy.monthlyPriceMotorbike
+            : activePolicy.monthlyPriceCar
+        const totalAmount = pricePerMonth * renewalMonths
+
+        const paymentCode = await generateUniquePaymentCode()
+        const paymentQrUrl = buildVietQrUrl({ amount: totalAmount, code: paymentCode })
+
+        subscription.renewal = {
+            code: paymentCode,
+            months: renewalMonths,
+            amount: totalAmount,
+            qrUrl: paymentQrUrl,
+            requestedAt: new Date(),
+            paidAt: null,
+        }
+
+        await subscription.save()
+
+        return res.status(201).json({
+            status: 'success',
+            data: subscription,
+            payment: {
+                method: 'sepay',
+                code: paymentCode,
+                amount: totalAmount,
+                qrUrl: paymentQrUrl,
+                bank: SEPAY_BANK_CODE,
+                account: SEPAY_ACCOUNT,
+            },
+        })
+    } catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            message: error.message,
+        })
+    }
+}
+
+export async function cancelUnpaidSubscription(req, res) {
+    try {
+        const { id } = req.params
+        const { userId, username } = req.body
+
+        const user = await resolveUser({ userId, username })
+        if (!user) {
+            return res.status(400).json({ status: 'error', message: 'User is required' })
+        }
+
+        const subscription = await UserPackage.findById(id)
+        if (!subscription) {
+            return res.status(404).json({ status: 'error', message: 'Subscription not found' })
+        }
+
+        if (subscription.userId.toString() !== user._id.toString()) {
+            return res.status(403).json({ status: 'error', message: 'Not allowed' })
+        }
+
+        if (subscription.paymentStatus === 'paid') {
+            return res.status(400).json({ status: 'error', message: 'Không thể hủy đơn đã thanh toán' })
+        }
+
+        if (subscription.status !== 'pending') {
+            return res.status(400).json({ status: 'error', message: 'Chỉ hủy được đơn đang chờ duyệt' })
+        }
+
+        subscription.status = 'cancelled'
+        await subscription.save()
+
+        return res.json({ status: 'success' })
+    } catch (error) {
+        return res.status(500).json({ status: 'error', message: error.message })
     }
 }
 
