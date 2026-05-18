@@ -20,10 +20,10 @@ RST: D27
 
 
 // giao tiếp tx - rx
-tx1 D18 mega Hv1 
-Lv1 rx2 d16 esp32 
-lv4 tx2 d17 esp32
-hv4 rx1 d19 mega
+tx1 D18 mega 
+ rx2 d16 esp32 
+ tx2 d17 esp32
+rx1 d19 mega
 
 //Arduino mega 2560
 
@@ -35,4 +35,7 @@ S4: D38
 S5: D40
 S6: D42 
 
+// nguồn arduino mega
+dây nâu: cực dương
+dây đen: cực âm
 
