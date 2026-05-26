@@ -31,16 +31,6 @@ S6: D42
 dây nâu: cực dương
 dây đen: cực âm
 
-
-
-// Thẻ RFID
-SDA: D26
-SCK: D14
-MOSI: D13
-MISO: D12   
-RST: D27 
-
-
 // Arduino Uno (2 thẻ RFID - cổng vào / cổng ra)
 // SPI chung
 SCK: D13

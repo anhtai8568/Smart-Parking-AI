@@ -1,16 +1,4 @@
-#include <SPI.h>
-#include <MFRC522.h>
 #include <ESP32Servo.h>
-
-// ===== RFID =====
-#define SS_PIN 26
-#define RST_PIN 27
-
-#define SCK_PIN 14
-#define MISO_PIN 12
-#define MOSI_PIN 13
-
-MFRC522 rfid(SS_PIN, RST_PIN);
 
 // ===== SENSOR =====
 #define TRIG1 19
@@ -52,19 +40,6 @@ float getDistance(int trigPin, int echoPin) {
   return duration * 0.034 / 2;
 }
 
-// ===== Đọc UID =====
-String readUID() {
-  if (!rfid.PICC_IsNewCardPresent()) return "";
-  if (!rfid.PICC_ReadCardSerial()) return "";
-
-  String uid = "";
-  for (byte i = 0; i < rfid.uid.size; i++) {
-    uid += String(rfid.uid.uidByte[i], HEX);
-  }
-
-  rfid.PICC_HaltA();
-  return uid;
-}
 
 void setup() {
   Serial.begin(115200);
@@ -72,10 +47,6 @@ void setup() {
   // Khởi động UART2 kết nối thẳng với Mega
   SerialMega.begin(9600, SERIAL_8N1, 16, 17);
   SerialMega.setTimeout(50); 
-
-  // RFID
-  SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, SS_PIN);
-  rfid.PCD_Init();
 
   // Sensor
   pinMode(TRIG1, OUTPUT);
@@ -142,26 +113,12 @@ void loop() {
     xeDangChoQuetThe = false; 
   }
 
-  // ===== 4. QUÉT RFID CHO XE VÀO =====
-  if (xeDangChoQuetThe) {
-    if (soChoTrong == 0) {
-      static unsigned long lastBaoHetCho = 0;
-      if (millis() - lastBaoHetCho > 3000) {
-        Serial.println("Het cho! Khong the vao.");
-        lastBaoHetCho = millis();
-      }
-    } 
-    else {
-      String uid = readUID();
-      if (uid != "") {
-        Serial.print("UID: ");
-        Serial.println(uid);
-        Serial.println("Mo cong Vao!");
-
-        myServo.write(90);
-        currentAngle = 90;
-        xeDangChoQuetThe = false; 
-      }
+  // ===== 4. CHO XE VAO: DOI RFID TU UNO GUI SANG =====
+  if (xeDangChoQuetThe && soChoTrong == 0) {
+    static unsigned long lastBaoHetCho = 0;
+    if (millis() - lastBaoHetCho > 3000) {
+      Serial.println("Het cho! Khong the vao.");
+      lastBaoHetCho = millis();
     }
   }
 
