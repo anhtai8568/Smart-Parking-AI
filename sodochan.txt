@@ -11,14 +11,6 @@ Echo2: D4
 // Servo MG90s
 Servo: D21  
 
-// Thẻ RFID
-SDA: D26
-SCK: D14
-MOSI: D13
-MISO: D12   
-RST: D27 
-
-
 // giao tiếp tx - rx
 tx1 D18 mega 
  rx2 d16 esp32 
@@ -39,3 +31,28 @@ S6: D42
 dây nâu: cực dương
 dây đen: cực âm
 
+
+
+// Thẻ RFID
+SDA: D26
+SCK: D14
+MOSI: D13
+MISO: D12   
+RST: D27 
+
+
+// Arduino Uno (2 thẻ RFID - cổng vào / cổng ra)
+// SPI chung
+SCK: D13
+MOSI: D11
+MISO: D12
+3.3V: 3.3V
+GND: GND
+
+// RFID cổng vào
+SS(SDA): D10
+RST: D9
+
+// RFID cổng ra
+SS(SDA): D8
+RST: D7
