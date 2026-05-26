@@ -45,7 +45,7 @@ const userPackageSchema = new mongoose.Schema(
         },
         paymentStatus: {
             type: String,
-            enum: ['unpaid', 'paid'],
+            enum: ['unpaid', 'paid', 'carried_over'],
             default: 'unpaid',
         },
         paymentCode: {

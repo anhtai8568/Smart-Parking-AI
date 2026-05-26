@@ -1,6 +1,9 @@
 import 'dotenv/config'
+import dns from 'dns'
 import app from './app.js'
 import { connectDatabase } from './config/database.js'
+
+dns.setServers(['8.8.8.8', '8.8.4.4'])
 
 const port = Number(process.env.PORT || 4000)
 

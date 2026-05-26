@@ -10,7 +10,7 @@ npm run dev
 ## 2. Chạy ngrok
 
 ```bash
-ngrok http --domain=snoring-thud-animate.ngrok-free.app 4000
+ngrok http --domain=snoring-thud-animate.ngrok-free.dev 4000
 ```
 
 ## 3. Webhook SePay
@@ -18,7 +18,7 @@ ngrok http --domain=snoring-thud-animate.ngrok-free.app 4000
 Cấu hình trong dashboard SePay:
 
 ```
-https://snoring-thud-animate.ngrok-free.app/api/sepay/webhook
+https://snoring-thud-animate.ngrok-free.dev/api/sepay/webhook
 ```
 
 > Phương thức: `POST` — Xác thực: không

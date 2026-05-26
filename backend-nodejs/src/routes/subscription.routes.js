@@ -5,6 +5,7 @@ import {
     createSubscription,
     createRenewalPayment,
     listMySubscriptions,
+    listPaymentHistory,
     listSubscriptions,
     rejectSubscription,
 } from '../controllers/subscription.controller.js'
@@ -13,6 +14,7 @@ const router = Router()
 
 router.get('/', listSubscriptions)
 router.get('/me', listMySubscriptions)
+router.get('/payment-history', listPaymentHistory)
 router.post('/', createSubscription)
 router.post('/:id/renew', createRenewalPayment)
 router.patch('/:id/approve', approveSubscription)

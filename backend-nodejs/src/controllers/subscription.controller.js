@@ -275,6 +275,17 @@ export async function createSubscription(req, res) {
             ? buildVietQrUrl({ amount: totalAmount, code: paymentCode })
             : null
 
+        // Kiểm tra xem có thanh toán cũ từ đơn bị từ chối không (cùng loại xe, cùng số tiền)
+        const prevPaidRejected = shouldUseSepay
+            ? await UserPackage.findOne({
+                userId: user._id,
+                vehicleType: actualVehicleType,
+                status: 'rejected',
+                paymentStatus: 'paid',
+                totalAmount,
+            }).sort({ createdAt: -1 })
+            : null
+
         const subscription = await UserPackage.create({
             userId: user._id,
             vehicleId: vehicle._id,
@@ -284,15 +295,24 @@ export async function createSubscription(req, res) {
             pricePerMonth,
             totalAmount,
             paymentMethod: method,
-            paymentStatus: 'unpaid',
+            paymentStatus: prevPaidRejected ? 'paid' : 'unpaid',
             paymentCode: paymentCode || null,
             paymentProvider: shouldUseSepay ? 'sepay' : null,
-            paymentQrUrl: paymentQrUrl || null,
+            paymentQrUrl: prevPaidRejected ? null : (paymentQrUrl || null),
+            paymentTransactionId: prevPaidRejected?.paymentTransactionId || null,
+            paymentReference: prevPaidRejected?.paymentReference || null,
+            paymentReceivedAt: prevPaidRejected?.paymentReceivedAt || null,
             contactPhone: normalizedPhone,
             status: 'pending',
             startDate: null,
             endDate: null,
         })
+
+        // Đánh dấu đơn cũ đã chuyển thanh toán sang đơn mới để tránh tái sử dụng
+        if (prevPaidRejected) {
+            prevPaidRejected.paymentStatus = 'carried_over'
+            await prevPaidRejected.save()
+        }
 
         if (!user.defaultVehicleId) {
             user.defaultVehicleId = vehicle._id
@@ -318,13 +338,21 @@ export async function createSubscription(req, res) {
         }
 
         if (shouldUseSepay) {
-            response.payment = {
-                method: 'sepay',
-                code: paymentCode,
-                amount: totalAmount,
-                qrUrl: paymentQrUrl,
-                bank: SEPAY_BANK_CODE,
-                account: SEPAY_ACCOUNT,
+            if (prevPaidRejected) {
+                response.payment = {
+                    method: 'sepay',
+                    carried_over: true,
+                    message: 'Thanh toán từ đơn trước đã được chuyển sang. Không cần thanh toán lại.',
+                }
+            } else {
+                response.payment = {
+                    method: 'sepay',
+                    code: paymentCode,
+                    amount: totalAmount,
+                    qrUrl: paymentQrUrl,
+                    bank: SEPAY_BANK_CODE,
+                    account: SEPAY_ACCOUNT,
+                }
             }
         }
 
@@ -650,6 +678,60 @@ export async function cancelUnpaidSubscription(req, res) {
         await subscription.save()
 
         return res.json({ status: 'success' })
+    } catch (error) {
+        return res.status(500).json({ status: 'error', message: error.message })
+    }
+}
+
+export async function listPaymentHistory(req, res) {
+    try {
+        const { userId, username } = req.query
+
+        const user = await resolveUser({ userId, username })
+        if (!user) {
+            return res.status(400).json({ status: 'error', message: 'User is required' })
+        }
+
+        const packages = await UserPackage.find({ userId: user._id })
+            .sort({ createdAt: -1 })
+            .limit(200)
+            .populate('vehicleId', 'licensePlate vehicleType')
+
+        const history = []
+
+        for (const pkg of packages) {
+            if (pkg.paymentStatus === 'paid') {
+                history.push({
+                    _id: `${pkg._id}_reg`,
+                    packageId: pkg._id,
+                    type: 'registration',
+                    date: pkg.paymentReceivedAt || pkg.startDate || pkg.createdAt,
+                    vehicleType: pkg.vehicleType,
+                    licensePlate: pkg.vehicleId?.licensePlate || '—',
+                    months: pkg.months,
+                    amount: pkg.totalAmount,
+                    paymentMethod: pkg.paymentMethod,
+                })
+            }
+
+            if (pkg.renewal?.paidAt) {
+                history.push({
+                    _id: `${pkg._id}_renewal`,
+                    packageId: pkg._id,
+                    type: 'renewal',
+                    date: pkg.renewal.paidAt,
+                    vehicleType: pkg.vehicleType,
+                    licensePlate: pkg.vehicleId?.licensePlate || '—',
+                    months: pkg.renewal.months,
+                    amount: pkg.renewal.amount,
+                    paymentMethod: 'sepay',
+                })
+            }
+        }
+
+        history.sort((a, b) => new Date(b.date) - new Date(a.date))
+
+        return res.json({ status: 'success', data: history })
     } catch (error) {
         return res.status(500).json({ status: 'error', message: error.message })
     }
