@@ -133,7 +133,7 @@ function VehicleCard({ type, sub, expiredSub, rejectedSub, isParked, onViewRejec
         {typeTag}
         <div style={{ fontSize: '14px', color: C.textSub }}>Chưa đăng ký gói tháng</div>
         <div style={{ marginTop: 'auto' }}>
-          <Link to="/user/monthly-ticket" style={{ textDecoration: 'none' }}>
+          <Link to="/user/monthly-ticket" state={{ viewPendingType: type }} style={{ textDecoration: 'none' }}>
             <button style={{ padding: '11px 0', width: '100%', backgroundColor: color, color: 'white', border: 'none', borderRadius: '10px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
               + Đăng ký ngay
             </button>

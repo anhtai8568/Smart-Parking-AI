@@ -159,132 +159,61 @@ async function hasPackageForType(userId, vehicleType, statuses, excludeId = null
 
 export async function createSubscription(req, res) {
     try {
-        const { userId, username, vehicleId, licensePlate, vehicleType, brand, color, paymentMethod, phone } = req.body
+        const { userId, username, vehicleId, licensePlate, vehicleType, brand, color, phone } = req.body
 
         const normalizedPhone = typeof phone === 'string' ? phone.trim() : ''
 
         const user = await resolveUser({ userId, username })
         if (!user) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'User is required',
-            })
+            return res.status(400).json({ status: 'error', message: 'User is required' })
         }
 
         if (!normalizedPhone) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Phone number is required',
-            })
+            return res.status(400).json({ status: 'error', message: 'Phone number is required' })
         }
 
         const resolvedVehicleType = vehicleType || null
         if (resolvedVehicleType && !VEHICLE_TYPES.includes(resolvedVehicleType)) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Invalid vehicle type',
-            })
+            return res.status(400).json({ status: 'error', message: 'Invalid vehicle type' })
         }
 
         const months = parseMonths(req.body.months)
         if (!months) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Invalid months',
-            })
+            return res.status(400).json({ status: 'error', message: 'Invalid months' })
         }
 
         const activePolicy = await PricingPolicy.findOne({ isActive: true }).sort({ effectiveFrom: -1 })
         if (!activePolicy) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Pricing policy is not configured',
-            })
+            return res.status(400).json({ status: 'error', message: 'Pricing policy is not configured' })
         }
 
-        const vehicle = await resolveVehicle({
-            vehicleId,
-            licensePlate,
-            vehicleType: resolvedVehicleType,
-            brand,
-            color,
-            userId: user._id,
-        })
-
+        const vehicle = await resolveVehicle({ vehicleId, licensePlate, vehicleType: resolvedVehicleType, brand, color, userId: user._id })
         if (!vehicle) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Vehicle information is required',
-            })
+            return res.status(400).json({ status: 'error', message: 'Vehicle information is required' })
         }
 
         const actualVehicleType = vehicle.vehicleType
         if (!VEHICLE_TYPES.includes(actualVehicleType)) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Unsupported vehicle type',
-            })
+            return res.status(400).json({ status: 'error', message: 'Unsupported vehicle type' })
         }
 
-        const existingActive = await UserPackage.findOne({
+        const existingInProgress = await UserPackage.findOne({
             vehicleId: vehicle._id,
-            status: 'active',
+            status: { $in: ['pending', 'approved'] },
         })
-        if (existingActive) {
-            return res.status(409).json({
-                status: 'error',
-                message: 'Vehicle already has an active monthly package',
-            })
+        if (existingInProgress) {
+            return res.status(409).json({ status: 'error', message: 'Vehicle already has a pending or approved request' })
         }
 
-        const existingPending = await UserPackage.findOne({
-            vehicleId: vehicle._id,
-            status: 'pending',
-        })
-        if (existingPending) {
-            return res.status(409).json({
-                status: 'error',
-                message: 'Vehicle already has a pending request',
-            })
-        }
-
-        const hasExistingType = await hasPackageForType(user._id, actualVehicleType, ['pending', 'active'])
+        const hasExistingType = await hasPackageForType(user._id, actualVehicleType, ['pending', 'approved', 'active'])
         if (hasExistingType) {
-            return res.status(409).json({
-                status: 'error',
-                message: 'User already has a monthly package for this vehicle type',
-            })
+            return res.status(409).json({ status: 'error', message: 'User already has a monthly package for this vehicle type' })
         }
 
         const pricePerMonth = actualVehicleType === 'motorbike'
             ? activePolicy.monthlyPriceMotorbike
             : activePolicy.monthlyPriceCar
         const totalAmount = pricePerMonth * months
-
-        const method = PAYMENT_METHODS.includes(paymentMethod) ? paymentMethod : 'bank_transfer'
-        const shouldUseSepay = method === 'sepay'
-        if (shouldUseSepay && !isSepayConfigured()) {
-            return res.status(500).json({
-                status: 'error',
-                message: 'SePay is not configured',
-            })
-        }
-
-        const paymentCode = shouldUseSepay ? await generateUniquePaymentCode() : null
-        const paymentQrUrl = shouldUseSepay
-            ? buildVietQrUrl({ amount: totalAmount, code: paymentCode })
-            : null
-
-        // Kiểm tra xem có thanh toán cũ từ đơn bị từ chối không (cùng loại xe, cùng số tiền)
-        const prevPaidRejected = shouldUseSepay
-            ? await UserPackage.findOne({
-                userId: user._id,
-                vehicleType: actualVehicleType,
-                status: 'rejected',
-                paymentStatus: 'paid',
-                totalAmount,
-            }).sort({ createdAt: -1 })
-            : null
 
         const subscription = await UserPackage.create({
             userId: user._id,
@@ -294,35 +223,19 @@ export async function createSubscription(req, res) {
             months,
             pricePerMonth,
             totalAmount,
-            paymentMethod: method,
-            paymentStatus: prevPaidRejected ? 'paid' : 'unpaid',
-            paymentCode: paymentCode || null,
-            paymentProvider: shouldUseSepay ? 'sepay' : null,
-            paymentQrUrl: prevPaidRejected ? null : (paymentQrUrl || null),
-            paymentTransactionId: prevPaidRejected?.paymentTransactionId || null,
-            paymentReference: prevPaidRejected?.paymentReference || null,
-            paymentReceivedAt: prevPaidRejected?.paymentReceivedAt || null,
+            paymentStatus: 'unpaid',
             contactPhone: normalizedPhone,
             status: 'pending',
             startDate: null,
             endDate: null,
         })
 
-        // Đánh dấu đơn cũ đã chuyển thanh toán sang đơn mới để tránh tái sử dụng
-        if (prevPaidRejected) {
-            prevPaidRejected.paymentStatus = 'carried_over'
-            await prevPaidRejected.save()
-        }
-
         if (!user.defaultVehicleId) {
             user.defaultVehicleId = vehicle._id
         }
 
         if (!user.phone) {
-            const existingPhone = await User.findOne({
-                phone: normalizedPhone,
-                _id: { $ne: user._id },
-            })
+            const existingPhone = await User.findOne({ phone: normalizedPhone, _id: { $ne: user._id } })
             if (!existingPhone) {
                 user.phone = normalizedPhone
             }
@@ -332,36 +245,9 @@ export async function createSubscription(req, res) {
             await user.save()
         }
 
-        const response = {
-            status: 'success',
-            data: subscription,
-        }
-
-        if (shouldUseSepay) {
-            if (prevPaidRejected) {
-                response.payment = {
-                    method: 'sepay',
-                    carried_over: true,
-                    message: 'Thanh toán từ đơn trước đã được chuyển sang. Không cần thanh toán lại.',
-                }
-            } else {
-                response.payment = {
-                    method: 'sepay',
-                    code: paymentCode,
-                    amount: totalAmount,
-                    qrUrl: paymentQrUrl,
-                    bank: SEPAY_BANK_CODE,
-                    account: SEPAY_ACCOUNT,
-                }
-            }
-        }
-
-        return res.status(201).json(response)
+        return res.status(201).json({ status: 'success', data: subscription })
     } catch (error) {
-        return res.status(500).json({
-            status: 'error',
-            message: error.message,
-        })
+        return res.status(500).json({ status: 'error', message: error.message })
     }
 }
 
@@ -428,91 +314,91 @@ export async function listMySubscriptions(req, res) {
 export async function approveSubscription(req, res) {
     try {
         const { id } = req.params
-        const { paymentMethod, startDate } = req.body
 
         const subscription = await UserPackage.findById(id)
         if (!subscription) {
-            return res.status(404).json({
-                status: 'error',
-                message: 'Subscription not found',
-            })
+            return res.status(404).json({ status: 'error', message: 'Subscription not found' })
         }
 
         const subscriptionVehicleType = await resolvePackageVehicleType(subscription)
         if (!subscriptionVehicleType) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Vehicle type is required for approval',
-            })
+            return res.status(400).json({ status: 'error', message: 'Vehicle type is required for approval' })
         }
 
         if (subscription.status !== 'pending') {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Only pending subscriptions can be approved',
-            })
+            return res.status(400).json({ status: 'error', message: 'Only pending subscriptions can be approved' })
         }
 
-        const activeExisting = await UserPackage.findOne({
-            vehicleId: subscription.vehicleId,
-            status: 'active',
-        })
+        const activeExisting = await UserPackage.findOne({ vehicleId: subscription.vehicleId, status: 'active' })
         if (activeExisting) {
-            return res.status(409).json({
-                status: 'error',
-                message: 'Vehicle already has an active package',
-            })
+            return res.status(409).json({ status: 'error', message: 'Vehicle already has an active package' })
         }
 
-        const hasSameTypeActive = await hasPackageForType(
-            subscription.userId,
-            subscriptionVehicleType,
-            ['active'],
-            subscription._id
-        )
+        const hasSameTypeActive = await hasPackageForType(subscription.userId, subscriptionVehicleType, ['active'], subscription._id)
         if (hasSameTypeActive) {
-            return res.status(409).json({
-                status: 'error',
-                message: 'User already has an active package for this vehicle type',
-            })
+            return res.status(409).json({ status: 'error', message: 'User already has an active package for this vehicle type' })
+        }
+
+        // Sinh QR SePay để user thanh toán
+        if (isSepayConfigured()) {
+            const paymentCode = await generateUniquePaymentCode()
+            const paymentQrUrl = buildVietQrUrl({ amount: subscription.totalAmount, code: paymentCode })
+            subscription.paymentMethod = 'sepay'
+            subscription.paymentCode = paymentCode
+            subscription.paymentQrUrl = paymentQrUrl
+            subscription.paymentProvider = 'sepay'
+        }
+
+        subscription.status = 'approved'
+        subscription.approvedAt = new Date()
+        subscription.vehicleType = subscriptionVehicleType
+
+        await subscription.save()
+
+        return res.json({ status: 'success', data: subscription })
+    } catch (error) {
+        return res.status(500).json({ status: 'error', message: error.message })
+    }
+}
+
+export async function issueCard(req, res) {
+    try {
+        const { id } = req.params
+        const { startDate, confirmCash } = req.body
+
+        const subscription = await UserPackage.findById(id)
+        if (!subscription) {
+            return res.status(404).json({ status: 'error', message: 'Subscription not found' })
+        }
+
+        if (subscription.status !== 'approved') {
+            return res.status(400).json({ status: 'error', message: 'Chỉ cấp thẻ được cho đơn đã được duyệt' })
+        }
+
+        const isPaid = subscription.paymentStatus === 'paid'
+
+        if (!isPaid && !confirmCash) {
+            return res.status(400).json({ status: 'error', message: 'Cần xác nhận thu tiền mặt trước khi cấp thẻ' })
+        }
+
+        if (!isPaid) {
+            subscription.paymentMethod = 'cash'
+            subscription.paymentStatus = 'paid'
+            subscription.paymentReceivedAt = new Date()
         }
 
         const start = startDate ? new Date(startDate) : new Date()
         const end = addMonths(start, subscription.months)
 
-        const method = subscription.paymentMethod === 'sepay'
-            ? 'sepay'
-            : PAYMENT_METHODS.includes(paymentMethod)
-                ? paymentMethod
-                : subscription.paymentMethod
-
-        if (subscription.paymentMethod === 'sepay' && subscription.paymentStatus !== 'paid') {
-            return res.status(400).json({
-                status: 'error',
-                message: 'Chưa nhận được thanh toán SePay, không thể duyệt',
-            })
-        }
-
         subscription.status = 'active'
-        if (subscription.paymentStatus !== 'paid') {
-            subscription.paymentStatus = 'paid'
-        }
-        subscription.paymentMethod = method
         subscription.startDate = start
         subscription.endDate = end
-        subscription.vehicleType = subscriptionVehicleType
 
         await subscription.save()
 
-        return res.json({
-            status: 'success',
-            data: subscription,
-        })
+        return res.json({ status: 'success', data: subscription })
     } catch (error) {
-        return res.status(500).json({
-            status: 'error',
-            message: error.message,
-        })
+        return res.status(500).json({ status: 'error', message: error.message })
     }
 }
 
@@ -732,6 +618,108 @@ export async function listPaymentHistory(req, res) {
         history.sort((a, b) => new Date(b.date) - new Date(a.date))
 
         return res.json({ status: 'success', data: history })
+    } catch (error) {
+        return res.status(500).json({ status: 'error', message: error.message })
+    }
+}
+
+export async function updateSubscription(req, res) {
+    try {
+        const { id } = req.params
+        const { userId, username, phone, brand, color, months, paymentMethod } = req.body
+
+        const user = await resolveUser({ userId, username })
+        if (!user) {
+            return res.status(400).json({ status: 'error', message: 'User is required' })
+        }
+
+        const subscription = await UserPackage.findById(id).populate('vehicleId')
+        if (!subscription) {
+            return res.status(404).json({ status: 'error', message: 'Subscription not found' })
+        }
+
+        if (subscription.userId.toString() !== user._id.toString()) {
+            return res.status(403).json({ status: 'error', message: 'Not allowed' })
+        }
+
+        if (subscription.status !== 'pending') {
+            return res.status(400).json({ status: 'error', message: 'Chỉ có thể sửa đơn đang chờ duyệt' })
+        }
+
+        const isPaid = subscription.paymentStatus === 'paid'
+        const { licensePlate } = req.body
+
+        if (phone && typeof phone === 'string') {
+            subscription.contactPhone = phone.trim()
+        }
+
+        // Cập nhật biển số xe (luôn cho phép khi đơn còn pending)
+        if (licensePlate) {
+            const plate = licensePlate.trim().toUpperCase()
+            const vehicleId = subscription.vehicleId._id || subscription.vehicleId
+            const existingOther = await Vehicle.findOne({ licensePlate: plate, _id: { $ne: vehicleId } })
+            if (existingOther) {
+                if (existingOther.userId && existingOther.userId.toString() !== user._id.toString()) {
+                    return res.status(409).json({ status: 'error', message: 'Biển số xe đã được đăng ký bởi người khác' })
+                }
+                subscription.vehicleId = existingOther._id
+            } else {
+                const vehicle = await Vehicle.findById(vehicleId)
+                if (vehicle) {
+                    vehicle.licensePlate = plate
+                    await vehicle.save()
+                }
+            }
+        }
+
+        // Cập nhật thông tin xe (brand, color)
+        const currentVehicleId = subscription.vehicleId._id || subscription.vehicleId
+        if (brand !== undefined || color !== undefined) {
+            const vehicle = await Vehicle.findById(currentVehicleId)
+            if (vehicle) {
+                if (brand !== undefined) vehicle.brand = brand.trim()
+                if (color !== undefined) vehicle.color = color.trim()
+                await vehicle.save()
+            }
+        }
+
+        if (!isPaid) {
+            // Cập nhật số tháng
+            if (months !== undefined) {
+                const parsedMonths = parseMonths(months)
+                if (!parsedMonths) {
+                    return res.status(400).json({ status: 'error', message: 'Invalid months' })
+                }
+                subscription.months = parsedMonths
+                subscription.totalAmount = subscription.pricePerMonth * parsedMonths
+            }
+
+            // Cập nhật phương thức thanh toán
+            if (paymentMethod && PAYMENT_METHODS.includes(paymentMethod)) {
+                if (paymentMethod === 'sepay' && !isSepayConfigured()) {
+                    return res.status(500).json({ status: 'error', message: 'SePay is not configured' })
+                }
+                subscription.paymentMethod = paymentMethod
+                if (paymentMethod === 'sepay') {
+                    if (!subscription.paymentCode) {
+                        subscription.paymentCode = await generateUniquePaymentCode()
+                    }
+                    subscription.paymentQrUrl = buildVietQrUrl({ amount: subscription.totalAmount, code: subscription.paymentCode })
+                    subscription.paymentProvider = 'sepay'
+                } else {
+                    subscription.paymentCode = null
+                    subscription.paymentQrUrl = null
+                    subscription.paymentProvider = null
+                }
+            } else if (subscription.paymentMethod === 'sepay' && subscription.paymentCode && months !== undefined) {
+                // Cập nhật lại QR nếu số tháng thay đổi
+                subscription.paymentQrUrl = buildVietQrUrl({ amount: subscription.totalAmount, code: subscription.paymentCode })
+            }
+        }
+
+        await subscription.save()
+
+        return res.json({ status: 'success', data: subscription })
     } catch (error) {
         return res.status(500).json({ status: 'error', message: error.message })
     }

@@ -41,7 +41,7 @@ const userPackageSchema = new mongoose.Schema(
         paymentMethod: {
             type: String,
             enum: ['cash', 'bank_transfer', 'sepay'],
-            default: 'bank_transfer',
+            default: null,
         },
         paymentStatus: {
             type: String,
@@ -79,8 +79,12 @@ const userPackageSchema = new mongoose.Schema(
         },
         status: {
             type: String,
-            enum: ['pending', 'active', 'expired', 'cancelled', 'rejected'],
+            enum: ['pending', 'approved', 'active', 'expired', 'cancelled', 'rejected'],
             default: 'pending',
+        },
+        approvedAt: {
+            type: Date,
+            default: null,
         },
         startDate: {
             type: Date,
