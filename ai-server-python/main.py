@@ -8,6 +8,8 @@ import uvicorn
 # Import 2 module bạn vừa tạo
 from utils.detect_license import PlateDetector
 from utils.character import CharacterRecognizer
+from models.aruco_gene import generate_aruco_image, get_aruco_id_from_license_plate
+from io import BytesIO
 
 app = FastAPI(title="ParkVision AI API")
 
@@ -83,6 +85,36 @@ def video_stream():
         generate_frames(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+@app.get("/api/aruco/generate/{identifier}")
+def generate_aruco(identifier: str, size: int = 400, label: bool = True):
+    """
+    Tạo và tải về ảnh mã ArUco dưới định dạng PNG theo ID hoặc biển số xe.
+    """
+    custom_label = None
+    try:
+        marker_id = int(identifier)
+        if marker_id < 0 or marker_id >= 250:
+            return {"status": "error", "message": "ID marker phải nằm trong khoảng từ 0 đến 249"}
+    except ValueError:
+        # Nếu không phải là số, coi identifier là biển số xe
+        plate = identifier.strip()
+        marker_id = get_aruco_id_from_license_plate(plate)
+        custom_label = f"BIEN SO: {plate.upper()} - ID: {marker_id}"
+
+    # Tạo ảnh ArUco
+    img = generate_aruco_image(marker_id, size, include_label=label, custom_label=custom_label)
+    
+    # Mã hóa ảnh sang dạng PNG
+    _, buffer = cv2.imencode(".png", img)
+    io_buf = BytesIO(buffer.tobytes())
+    
+    # Trả về dưới dạng file tải trực tiếp (Attachment)
+    filename = f"aruco_{identifier.replace('-', '_')}.png"
+    headers = {
+        "Content-Disposition": f"attachment; filename={filename}"
+    }
+    return StreamingResponse(io_buf, media_type="image/png", headers=headers)
 
 @app.post("/api/scan-plate")
 async def scan_plate(file: UploadFile = File(...)):

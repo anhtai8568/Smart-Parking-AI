@@ -418,10 +418,77 @@ const MonthlyTicket = () => {
       );
     }
 
-    // active / expired / etc.
+    if (selectedSub.status === 'active') {
+      const isCar = selectedSub.vehicleType === 'car';
+      const licensePlate = selectedSub.vehicleId?.licensePlate || '';
+      
+      const handleDownloadArUco = () => {
+        const downloadUrl = `http://localhost:8000/api/aruco/generate/${encodeURIComponent(licensePlate)}?size=500&label=true`;
+        window.open(downloadUrl, '_blank');
+      };
+
+      return (
+        <div style={{ backgroundColor: '#f1f5f9', padding: '30px', borderRadius: '20px', border: `1px solid ${colors.border}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <span style={{ fontSize: '15px', fontWeight: '700', color: colors.textMain }}>Thông tin gói tháng đang sử dụng</span>
+            <span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600', backgroundColor: '#dcfce7', color: '#15803d' }}>
+              Đang hoạt động
+            </span>
+          </div>
+
+          <div style={{ backgroundColor: '#fff', border: `1px solid ${colors.border}`, borderRadius: '14px', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
+            {[
+              ['Biển số xe', licensePlate || '—'],
+              ['Hiệu xe / Màu xe', `${selectedSub.vehicleId?.brand || '—'} / ${selectedSub.vehicleId?.color || '—'}`],
+              ['Loại xe', selectedSub.vehicleType === 'motorbike' ? 'Xe máy' : 'Ô tô'],
+              ['Ngày bắt đầu', fmtDate(selectedSub.startDate)],
+              ['Ngày hết hạn', fmtDate(selectedSub.endDate)],
+              ['SĐT liên hệ', selectedSub.contactPhone || '—'],
+            ].map(([label, value]) => (
+              <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', borderBottom: `1px solid ${colors.border}`, paddingBottom: '8px' }}>
+                <span style={{ color: colors.textSub }}>{label}</span>
+                <span style={{ fontWeight: '600', color: colors.textMain }}>{value}</span>
+              </div>
+            ))}
+          </div>
+
+          {isCar && (
+            <div style={{ padding: '24px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '16px', textAlign: 'center' }}>
+              <h3 style={{ margin: '0 0 8px', color: '#166534', fontSize: '16px', fontWeight: '700' }}>Mã nhận diện ArUco thông minh</h3>
+              <p style={{ fontSize: '13px', color: '#166534', margin: '0 0 16px', lineHeight: '1.5' }}>
+                Gói tháng ô tô đi kèm một mã ArUco riêng biệt giúp hệ thống camera tự động quét và mở cổng từ xa. Vui lòng tải về và in dán ở mặt trước kính lái xe của bạn.
+              </p>
+              
+              <button
+                onClick={handleDownloadArUco}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#16a34a',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '10px',
+                  fontWeight: 'bold',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  transition: 'all 0.2s',
+                  boxShadow: '0 4px 10px rgba(22,163,74,0.3)'
+                }}
+              >
+                📥 Tải xuống mã ArUco của xe
+              </button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // fallback for other statuses like expired, cancelled
     return (
       <div style={{ textAlign: 'center', padding: '20px', color: colors.textSub }}>
-        Bạn đã có gói tháng đang hoạt động cho loại xe này.
+        Gói tháng cho loại xe này ở trạng thái: {STATUS_LABEL[selectedSub.status] || selectedSub.status}
       </div>
     );
   };
