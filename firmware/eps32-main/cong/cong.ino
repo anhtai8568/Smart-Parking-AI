@@ -1,4 +1,14 @@
 #include <ESP32Servo.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+// ===== CẤU HÌNH WI-FI & MQTT =====
+const char* ssid = "YOUR_WIFI_SSID";             // <--- Thay bằng tên Wi-Fi của bạn
+const char* password = "YOUR_WIFI_PASSWORD";     // <--- Thay bằng mật khẩu Wi-Fi của bạn
+const char* mqtt_server = "YOUR_MQTT_BROKER_IP"; // <--- Thay bằng IP máy tính chạy Docker (Ví dụ: 192.168.1.15)
+
+WiFiClient espClient;
+PubSubClient client(espClient);
 
 // ===== SENSOR =====
 #define TRIG1 19
@@ -56,6 +66,64 @@ void moraochan() {
   currentAngle = 90;
 }
 
+// Hàm kết nối Wi-Fi
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+// Hàm xử lý khi nhận lệnh từ MQTT Broker
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  String message = "";
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  Serial.println(message);
+
+  // Nếu nhận được lệnh mở cửa từ xa từ cổng Web
+  if (String(topic) == "parking/commands/gate") {
+    if (message == "OPEN") {
+      moraochan();
+    }
+  }
+}
+
+// Hàm kết nối lại với MQTT Broker
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Thử kết nối với ID ngẫu nhiên
+    String clientId = "ESP32Client-" + String(random(0xffff), HEX);
+    if (client.connect(clientId.c_str())) {
+      Serial.println("connected");
+      // Subscribe lại chủ đề nhận lệnh mở cổng
+      client.subscribe("parking/commands/gate");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
 
 void setup() {
   Serial.begin(115200);
@@ -79,10 +147,22 @@ void setup() {
   myServo.attach(SERVO_PIN);
   myServo.write(0);
 
+  // Kết nối Wi-Fi
+  setup_wifi();
+  
+  // Cài đặt thông số MQTT Server
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+
   Serial.println("ESP32 Gate System Ready...");
 }
 
 void loop() {
+  // Duy trì kết nối Wi-Fi & MQTT
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
 
   // ===== 1. NHẬN VÀ BÓC TÁCH DỮ LIỆU TỪ MEGA =====
   if (SerialMega.available()) {
@@ -104,6 +184,19 @@ void loop() {
       if (currentSlotHasCar && !slotStatus[i]) {
         Serial.print("Xe da vao o do: S");
         Serial.println(i + 1);
+        
+        // Publish lên MQTT
+        String payload = "S" + String(i + 1) + ": CO XE";
+        client.publish("parking/events/slots", payload.c_str());
+      }
+      // Nếu ô đỗ trước đó CÓ XE (true) mà bây giờ TRỐNG (false) thì báo xe ra
+      else if (!currentSlotHasCar && slotStatus[i]) {
+        Serial.print("Xe da roi khoi o do: S");
+        Serial.println(i + 1);
+        
+        // Publish lên MQTT
+        String payload = "S" + String(i + 1) + ": TRONG";
+        client.publish("parking/events/slots", payload.c_str());
       }
       slotStatus[i] = currentSlotHasCar;
     }
@@ -133,14 +226,17 @@ void loop() {
 
         if (xeDangChoQuetThe) {
           if (soChoTrong > 0) {
-            rfidUid = cardID; // Lưu tạm vào biến tạm rfidUid (xe vãng lai)
-            Serial.print("Da luu rfidUid tam: ");
-            Serial.println(rfidUid);
-            moraochan(); // Gọi hàm mở rào chắn
-            dangChoXeVao = true;
-            xeDaVaoTrong = false;
-            enableScanID = false; // Tắt quét thẻ sau khi nhận dạng thành công
-          } else {
+          rfidUid = cardID; // Lưu tạm vào biến tạm rfidUid (xe vãng lai)
+          Serial.print("Da luu rfidUid tam: ");
+          Serial.println(rfidUid);
+          moraochan(); // Gọi hàm mở rào chắn
+          dangChoXeVao = true;
+          xeDaVaoTrong = false;
+          enableScanID = false; // Tắt quét thẻ sau khi nhận dạng thành công
+          
+          // Publish sự kiện thẻ vào lên MQTT
+          client.publish("parking/events/gate/in", cardID.c_str());
+        } else {
             Serial.println("Het cho! Khong the mo barrier.");
           }
         }
@@ -153,12 +249,15 @@ void loop() {
         if (xeDangRa) {
           if (cardID == rfidUid) {
             Serial.println("THE KHOP. Mo barrier!");
-            moraochan(); // Gọi hàm mở rào chắn
-            dangChoXeRa = true;
-            xeDaRaNgoai = false;
-            rfidUid = ""; // Xoá biến tạm sau khi khớp thẻ ra
-            enableScanID = false; // Tắt quét thẻ sau khi nhận dạng thành công
-          } else {
+          moraochan(); // Gọi hàm mở rào chắn
+          dangChoXeRa = true;
+          xeDaRaNgoai = false;
+          rfidUid = ""; // Xoá biến tạm sau khi khớp thẻ ra
+          enableScanID = false; // Tắt quét thẻ sau khi nhận dạng thành công
+          
+          // Publish sự kiện thẻ ra lên MQTT
+          client.publish("parking/events/gate/out", cardID.c_str());
+        } else {
             Serial.print("THE KHONG KHOP! (The ra: ");
             Serial.print(cardID);
             Serial.print(" | The da luu: ");

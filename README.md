@@ -14,12 +14,49 @@ Dự án gồm **3 service** cần chạy đồng thời:
 DA/Smart-Parking-AI/
 ├── backend-nodejs/          ← Node.js API server
 ├── ai-server-python/        ← Python AI server (nhận diện biển số)
-├── frontend-react/
-│   └── smart-parking-frontend/  ← React app
+├── frontend-react/          ← React app
 └── .venv/                   ← Python virtual environment
 ```
 
 ---
+
+## Cách 1: Chạy kết hợp Docker & Python (Khuyên dùng - Sử dụng được Webcam)
+
+Phương pháp này giúp khởi động nhanh Backend và Frontend bằng Docker, đồng thời chạy AI Server bằng Python trên máy thật để có thể truy cập webcam laptop trực tiếp.
+
+### Yêu cầu chuẩn bị
+- Đã cài đặt **Docker Desktop**: https://www.docker.com/products/docker-desktop/
+- Đã cài đặt **Python 3.10** (đã hoàn thành bước cài đặt thư viện tại **Cách 2 -> A3** bên dưới).
+
+### Hướng dẫn khởi chạy
+Bạn cần mở **2 cửa sổ terminal riêng**:
+
+#### Terminal 1 — Backend & Giao diện Web (Docker)
+1. Khởi động ứng dụng **Docker Desktop**.
+2. Mở terminal tại thư mục gốc của dự án (`d:\Đồ án liên ngành`) và chạy lệnh:
+   ```powershell
+   docker-compose up --build
+   ```
+   *(Quá trình tải base image và cài đặt sẽ tự động diễn ra. Khi thành công, Frontend và Backend sẽ chạy tại cổng `5173` và `4000`)*
+
+#### Terminal 2 — AI Server (Python máy thật để dùng Webcam)
+1. Mở một cửa sổ terminal mới tại thư mục gốc của dự án.
+2. Kích hoạt môi trường ảo Python và khởi chạy AI Server:
+   ```powershell
+   .venv\Scripts\Activate.ps1
+   cd ai-server-python
+   python main.py
+   ```
+   *(AI Server sẽ chạy tại cổng `8000` và kết nối trực tiếp đến webcam laptop)*
+
+### Địa chỉ truy cập
+- **Giao diện Web**: `http://localhost:5173` (giao diện sẽ tự động kết nối webcam từ AI server)
+- **Backend API**: `http://localhost:4000`
+- **AI Server Docs**: `http://localhost:8000/docs`
+
+---
+
+## Cách 2: Chạy dự án thủ công (Không dùng Docker)
 
 ## A. Lần đầu cài đặt (chưa có gì)
 
@@ -99,7 +136,7 @@ pip install fastapi "uvicorn[standard]" opencv-python numpy ultralytics python-m
 ### A4. Cài đặt Frontend (React)
 
 ```powershell
-cd "e:\Đồ án liên ngành\DA\Smart-Parking-AI\frontend-react\smart-parking-frontend"
+cd "e:\Đồ án liên ngành\DA\Smart-Parking-AI\frontend-react"
 npm install
 ```
 
@@ -147,7 +184,7 @@ INFO:     Uvicorn running on http://0.0.0.0:8000
 ### Terminal 3 — Frontend
 
 ```powershell
-cd "e:\Đồ án liên ngành\DA\Smart-Parking-AI\frontend-react\smart-parking-frontend"
+cd "e:\Đồ án liên ngành\DA\Smart-Parking-AI\frontend-react"
 npm run dev
 ```
 
