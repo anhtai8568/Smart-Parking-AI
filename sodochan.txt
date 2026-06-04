@@ -11,11 +11,17 @@ Echo2: D4
 // Servo MG90s
 Servo: D21  
 
-// giao tiếp tx - rx
-tx1 D18 mega 
- rx2 d16 esp32 
- tx2 d17 esp32
-rx1 d19 mega
+// giao tiếp tx - rx giữa ESP32 và Arduino Mega
+tx1 D18 mega <--> rx2 d16 esp32
+rx1 d19 mega <--> tx2 d17 esp32
+
+// giao tiếp tx - rx giữa ESP32 và Arduino Uno
+rx d26 esp32 <--> tx d1 uno
+tx d27 esp32 <--> rx d0 uno
+
+* LƯU Ý QUAN TRỌNG:
+- Khi nạp code cho Arduino Uno, PHẢI rút 2 dây nối TX/RX (D0, D1) với ESP32 ra để tránh xung đột nạp code. Nạp xong cắm lại.
+- Phải nối chung GND giữa ESP32 và Arduino Uno.
 
 //Arduino mega 2560
 
@@ -36,6 +42,7 @@ dây đen: cực âm
 SCK: D13
 MOSI: D11
 MISO: D12
+
 3.3V: 3.3V
 GND: GND
 
