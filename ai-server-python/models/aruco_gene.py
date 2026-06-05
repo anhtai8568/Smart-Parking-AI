@@ -4,15 +4,15 @@ import hashlib
 
 def get_aruco_dict(dict_type: int = None):
     """
-    Returns the OpenCV ArUco dictionary.
-    Defaults to DICT_4X4_250 (ideal for range detection, supports up to 250 IDs).
+    Returns the OpenCV ArUco/AprilTag dictionary.
+    Defaults to DICT_APRILTAG_36h11 (ideal for high robustness, supports up to 587 IDs).
     """
     if dict_type is None:
         try:
-            dict_type = cv2.aruco.DICT_4X4_250
+            dict_type = cv2.aruco.DICT_APRILTAG_36h11
         except AttributeError:
             # Fallback for some OpenCV versions
-            dict_type = 2  # Integer value for DICT_4X4_250
+            dict_type = 20  # Integer value for DICT_APRILTAG_36h11
             
     try:
         # OpenCV >= 4.7.0
@@ -23,7 +23,7 @@ def get_aruco_dict(dict_type: int = None):
 
 def get_aruco_id_from_license_plate(license_plate: str) -> int:
     """
-    Deterministically hashes a license plate string to an ArUco ID between 0 and 249.
+    Deterministically hashes a license plate string to an AprilTag ID between 0 and 586.
     """
     # Keep only alphanumeric characters and uppercase
     clean_plate = "".join(c for c in license_plate if c.isalnum()).upper()
@@ -32,16 +32,16 @@ def get_aruco_id_from_license_plate(license_plate: str) -> int:
     # Generate MD5 hash of the license plate
     hash_object = hashlib.md5(clean_plate.encode("utf-8"))
     hash_hex = hash_object.hexdigest()
-    # Modulo 250 to keep it in the valid range for DICT_4X4_250
-    return int(hash_hex, 16) % 250
+    # Modulo 587 to keep it in the valid range for DICT_APRILTAG_36h11
+    return int(hash_hex, 16) % 587
 
 def generate_aruco_image(marker_id: int, size: int = 400, include_label: bool = True, custom_label: str = None) -> np.ndarray:
     """
-    Generates an ArUco marker image with a white border and optional text label.
+    Generates an AprilTag marker image with a white border and optional text label.
     
     Args:
-        marker_id: The ID of the marker (0-249 for DICT_4X4_250).
-        size: Size of the inner ArUco marker in pixels.
+        marker_id: The ID of the marker (0-586 for DICT_APRILTAG_36h11).
+        size: Size of the inner marker in pixels.
         include_label: Whether to write the ID text below the marker.
         custom_label: Custom text to write instead of default label.
         
@@ -79,7 +79,7 @@ def generate_aruco_image(marker_id: int, size: int = 400, include_label: bool = 
     
     # 3. Add text label
     if include_label:
-        text = custom_label if custom_label else f"ParkVision AI - ID: {marker_id}"
+        text = custom_label if custom_label else f"ParkVision AI - AprilTag ID: {marker_id}"
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.6
         color = (0, 0, 0)  # Black text
@@ -98,8 +98,8 @@ if __name__ == "__main__":
     import argparse
     import os
 
-    parser = argparse.ArgumentParser(description="Generate ArUco Markers for Parking System")
-    parser.add_argument("--id", type=int, default=None, help="ArUco Marker ID to generate (0-249)")
+    parser = argparse.ArgumentParser(description="Generate AprilTag Markers for Parking System")
+    parser.add_argument("--id", type=int, default=None, help="AprilTag Marker ID to generate (0-586)")
     parser.add_argument("--plate", type=str, default=None, help="License plate to generate marker for")
     parser.add_argument("--size", type=int, default=400, help="Size of the marker in pixels")
     parser.add_argument("--output", type=str, default=None, help="Output file path")
@@ -115,15 +115,15 @@ if __name__ == "__main__":
     
     if args.plate:
         marker_id = get_aruco_id_from_license_plate(args.plate)
-        custom_label = f"BIEN SO: {args.plate.upper()} - ID: {marker_id}"
-        print(f"Hashed license plate '{args.plate}' to ArUco ID: {marker_id}")
+        custom_label = f"BIEN SO: {args.plate.upper()} - AprilTag ID: {marker_id}"
+        print(f"Hashed license plate '{args.plate}' to AprilTag ID: {marker_id}")
         
-    if marker_id < 0 or marker_id >= 250:
-        print("Error: ArUco ID must be between 0 and 249.")
+    if marker_id < 0 or marker_id >= 587:
+        print("Error: AprilTag ID must be between 0 and 586.")
         exit(1)
         
     img = generate_aruco_image(marker_id, args.size, custom_label=custom_label)
     
-    output_path = args.output if args.output else f"aruco_{marker_id}.png"
+    output_path = args.output if args.output else f"apriltag_{marker_id}.png"
     cv2.imwrite(output_path, img)
-    print(f"Generated ArUco marker with ID {marker_id} and saved to: {output_path}")
+    print(f"Generated AprilTag marker with ID {marker_id} and saved to: {output_path}")

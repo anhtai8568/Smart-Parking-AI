@@ -89,20 +89,20 @@ def video_stream():
 @app.get("/api/aruco/generate/{identifier}")
 def generate_aruco(identifier: str, size: int = 400, label: bool = True):
     """
-    Tạo và tải về ảnh mã ArUco dưới định dạng PNG theo ID hoặc biển số xe.
+    Tạo và tải về ảnh mã AprilTag dưới định dạng PNG theo ID hoặc biển số xe.
     """
     custom_label = None
     try:
         marker_id = int(identifier)
-        if marker_id < 0 or marker_id >= 250:
-            return {"status": "error", "message": "ID marker phải nằm trong khoảng từ 0 đến 249"}
+        if marker_id < 0 or marker_id >= 587:
+            return {"status": "error", "message": "ID marker phải nằm trong khoảng từ 0 đến 586"}
     except ValueError:
         # Nếu không phải là số, coi identifier là biển số xe
         plate = identifier.strip()
         marker_id = get_aruco_id_from_license_plate(plate)
-        custom_label = f"BIEN SO: {plate.upper()} - ID: {marker_id}"
+        custom_label = f"BIEN SO: {plate.upper()} - AprilTag ID: {marker_id}"
 
-    # Tạo ảnh ArUco
+    # Tạo ảnh ArUco (nay là AprilTag)
     img = generate_aruco_image(marker_id, size, include_label=label, custom_label=custom_label)
     
     # Mã hóa ảnh sang dạng PNG
@@ -110,7 +110,7 @@ def generate_aruco(identifier: str, size: int = 400, label: bool = True):
     io_buf = BytesIO(buffer.tobytes())
     
     # Trả về dưới dạng file tải trực tiếp (Attachment)
-    filename = f"aruco_{identifier.replace('-', '_')}.png"
+    filename = f"apriltag_{identifier.replace('-', '_')}.png"
     headers = {
         "Content-Disposition": f"attachment; filename={filename}"
     }
