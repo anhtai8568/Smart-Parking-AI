@@ -262,8 +262,8 @@ const MonthlyTicket = () => {
               className={`tab-btn ${isActive ? (isMotorbike ? 'active-motorbike' : 'active-car') : ''}`}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                {isMotorbike ? <Bike size={24} color={isActive ? '#2563eb' : '#64748b'} /> : <Car size={24} color={isActive ? '#d97706' : '#64748b'} />}
-                <span style={{ fontSize: '16px', fontWeight: '700', color: isActive ? (isMotorbike ? '#2563eb' : '#d97706') : '#1e293b' }}>
+                {isMotorbike ? <Bike size={24} color={isActive ? '#2563eb' : '#64748b'} /> : <Car size={24} color={isActive ? '#2563eb' : '#64748b'} />}
+                <span style={{ fontSize: '16px', fontWeight: '700', color: isActive ? '#2563eb' : '#1e293b' }}>
                   {isMotorbike ? 'Xe Máy' : 'Ô Tô'}
                 </span>
               </div>
@@ -282,7 +282,7 @@ const MonthlyTicket = () => {
   // ── Price banner shown above the registration form ────────────────────────
   const renderPriceBanner = () => {
     const isMotorbike = vehicleType === 'motorbike';
-    const accentColor = isMotorbike ? '#2563eb' : '#d97706';
+    const accentColor = '#2563eb';
     const price = isMotorbike ? pricing?.monthlyPriceMotorbike : pricing?.monthlyPriceCar;
     return (
       <div className={`banner-price ${isMotorbike ? 'motorbike' : 'car'}`}>
@@ -319,7 +319,7 @@ const MonthlyTicket = () => {
   // ── Main content for the selected vehicle type ────────────────────────────
   const renderContent = () => {
     const isMotorbike = vehicleType === 'motorbike';
-    const accentColor = isMotorbike ? '#2563eb' : '#d97706';
+    const accentColor = '#2563eb';
 
     if (!selectedSub) {
       return (
@@ -816,12 +816,12 @@ const MonthlyTicket = () => {
           background: #2563eb;
         }
         .tab-btn.active-car {
-          border-color: #d97706;
-          background: rgba(217, 119, 6, 0.04);
-          box-shadow: 0 8px 20px -6px rgba(217, 119, 6, 0.15);
+          border-color: #2563eb;
+          background: rgba(37, 99, 235, 0.04);
+          box-shadow: 0 8px 20px -6px rgba(37, 99, 235, 0.15);
         }
         .tab-btn.active-car::after {
-          background: #d97706;
+          background: #2563eb;
         }
         .tab-btn:hover:not(.active-motorbike):not(.active-car) {
           border-color: #cbd5e1;
@@ -852,8 +852,8 @@ const MonthlyTicket = () => {
           border-color: rgba(37, 99, 235, 0.15);
         }
         .banner-price.car {
-          background: linear-gradient(135deg, rgba(217, 119, 6, 0.03) 0%, rgba(217, 119, 6, 0.07) 100%);
-          border-color: rgba(217, 119, 6, 0.15);
+          background: linear-gradient(135deg, rgba(37, 99, 235, 0.03) 0%, rgba(37, 99, 235, 0.07) 100%);
+          border-color: rgba(37, 99, 235, 0.15);
         }
         .btn-submit {
           width: 100%;
@@ -880,12 +880,12 @@ const MonthlyTicket = () => {
           box-shadow: 0 12px 25px -4px rgba(37, 99, 235, 0.45);
         }
         .btn-submit.car {
-          background: linear-gradient(135deg, #d97706, #b45309);
-          box-shadow: 0 8px 20px -4px rgba(217, 119, 6, 0.35);
+          background: linear-gradient(135deg, #2563eb, #1d4ed8);
+          box-shadow: 0 8px 20px -4px rgba(37, 99, 235, 0.35);
         }
         .btn-submit.car:hover:not(:disabled) {
           transform: translateY(-2px);
-          box-shadow: 0 12px 25px -4px rgba(217, 119, 6, 0.45);
+          box-shadow: 0 12px 25px -4px rgba(37, 99, 235, 0.45);
         }
         .btn-submit:disabled {
           opacity: 0.6;

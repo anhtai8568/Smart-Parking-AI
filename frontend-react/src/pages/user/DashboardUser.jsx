@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { Download } from 'lucide-react'
 import api from '../../services/api'
 
 const C = {
@@ -58,7 +59,7 @@ function canRenew(sub) {
 function VehicleCard({ type, sub, expiredSub, rejectedSub, isParked, onViewRejected, onViewInfo, onRenew }) {
   const isMotorbike = type === 'motorbike'
   const label = isMotorbike ? 'Xe Máy' : 'Ô Tô'
-  const color = isMotorbike ? C.accent : C.orange
+  const color = C.accent
 
   const cardBase = {
     backgroundColor: C.card,
@@ -161,6 +162,17 @@ function VehicleCard({ type, sub, expiredSub, rejectedSub, isParked, onViewRejec
         }}>
           {isSepayUnpaid ? 'Chờ thanh toán' : (STATUS_LABEL[st] || st)}
         </span>
+        {st === 'active' && !isMotorbike && (
+          <a
+            href={`http://localhost:8000/api/aruco/generate/${encodeURIComponent(plate)}?size=500&label=true`}
+            target="_blank"
+            rel="noreferrer"
+            title="Tải mã AprilTag"
+            style={{ marginLeft: 'auto', color: '#16a34a', display: 'flex', alignItems: 'center' }}
+          >
+            <Download size={16} strokeWidth={2} />
+          </a>
+        )}
       </div>
 
       <div style={{ fontSize: '26px', fontWeight: '800', letterSpacing: '3px', color: C.textMain }}>{plate}</div>
@@ -179,12 +191,22 @@ function VehicleCard({ type, sub, expiredSub, rejectedSub, isParked, onViewRejec
       {st === 'active' && sub.endDate && (() => {
         const days = daysUntil(sub.endDate)
         return (
-          <div style={{ fontSize: '13px', color: days <= 7 ? '#b91c1c' : C.textSub }}>
-            Hết hạn: <strong style={{ color: days <= 7 ? '#b91c1c' : C.textMain }}>{fmtDate(sub.endDate)}</strong>
-            {days <= 30 && (
-              <span style={{ marginLeft: '6px', color: days <= 7 ? '#b91c1c' : '#b45309' }}>
-                ({days <= 0 ? 'Hôm nay' : `còn ${days} ngày`})
-              </span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '13px', color: days <= 7 ? '#b91c1c' : C.textSub }}>
+            <div>
+              Hết hạn: <strong style={{ color: days <= 7 ? '#b91c1c' : C.textMain }}>{fmtDate(sub.endDate)}</strong>
+              {days <= 30 && (
+                <span style={{ marginLeft: '6px', color: days <= 7 ? '#b91c1c' : '#b45309' }}>
+                  ({days <= 0 ? 'Hôm nay' : `còn ${days} ngày`})
+                </span>
+              )}
+            </div>
+            {canRenew(sub) && (
+              <button
+                onClick={() => onRenew(sub)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color, fontSize: '13px', fontWeight: '700', padding: 0, whiteSpace: 'nowrap' }}
+              >
+                {renewalPending ? 'Xem QR →' : 'Gia hạn →'}
+              </button>
             )}
           </div>
         )
@@ -205,14 +227,6 @@ function VehicleCard({ type, sub, expiredSub, rejectedSub, isParked, onViewRejec
         </button>
       )}
 
-      {canRenew(sub) && (
-        <button
-          onClick={() => onRenew(sub)}
-          style={{ padding: '11px 0', width: '100%', backgroundColor: color, color: 'white', border: 'none', borderRadius: '10px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}
-        >
-          {renewalPending ? 'Xem QR gia hạn →' : 'Gia hạn gói tháng →'}
-        </button>
-      )}
     </div>
   )
 }
