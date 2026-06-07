@@ -103,10 +103,12 @@ const Login = () => {
       localStorage.setItem('currentUser', JSON.stringify(payload.user));
 
       if (payload.user.role === 'admin') {
-        navigate('/admin');
-      } else {
-        navigate('/user');
-      }
+  navigate('/admin')
+} else if (payload.user.role === 'guard') {
+  navigate('/guard')
+} else {
+  navigate('/user')
+}
     } catch (requestError) {
       const message =
         requestError?.response?.data?.message ||
