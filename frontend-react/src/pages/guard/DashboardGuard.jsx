@@ -1,3 +1,5 @@
+import ParkingSlotGrid from '../../components/common/ParkingSlotGrid'
+
 function DashboardGuard() {
   return (
     <div>
@@ -110,6 +112,10 @@ function DashboardGuard() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="card" style={{ marginTop: '24px' }}>
+        <ParkingSlotGrid />
       </div>
     </div>
   )

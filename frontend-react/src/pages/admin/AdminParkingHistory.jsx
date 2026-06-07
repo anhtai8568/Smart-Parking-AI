@@ -27,6 +27,12 @@ function fmtCurrency(value) {
   return `${Number(value || 0).toLocaleString('vi-VN')}đ`
 }
 
+function toLocalInput(date) {
+  const d = new Date(date)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 const STATUS_LABEL = { in_progress: 'Đang gửi', completed: 'Đã ra', cancelled: 'Hủy' }
 const STATUS_COLOR = { in_progress: '#b45309', completed: '#15803d', cancelled: '#6b7280' }
 const STATUS_BG = { in_progress: '#fef3c7', completed: '#dcfce7', cancelled: '#f3f4f6' }
@@ -35,6 +41,8 @@ function AdminParkingHistory() {
   const [sessions, setSessions] = useState([])
   const [statusFilter, setStatusFilter] = useState('')
   const [plateFilter, setPlateFilter] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -42,7 +50,7 @@ function AdminParkingHistory() {
     try {
       setIsLoading(true)
       setError('')
-      const params = { limit: 200 }
+      const params = { limit: 500 }
       if (statusFilter) params.status = statusFilter
       const res = await api.get('/api/parking-history', { params })
       setSessions(res.data?.data || [])
@@ -55,14 +63,21 @@ function AdminParkingHistory() {
 
   useEffect(() => { fetchSessions() }, [statusFilter])
 
-  const displayed = plateFilter.trim()
-    ? sessions.filter((s) => s.licensePlate.includes(plateFilter.trim().toUpperCase()))
-    : sessions
+  const displayed = sessions.filter((s) => {
+    if (plateFilter.trim() && !s.licensePlate.includes(plateFilter.trim().toUpperCase())) return false
+    if (dateFrom && new Date(s.entryAt) < new Date(dateFrom)) return false
+    if (dateTo && new Date(s.entryAt) > new Date(dateTo)) return false
+    return true
+  })
 
   const inputStyle = {
     padding: '9px 14px', border: `1px solid ${C.border}`, borderRadius: '8px',
     fontSize: '14px', outline: 'none', color: C.textMain, backgroundColor: C.card,
   }
+
+  const labelStyle = { fontSize: '12px', fontWeight: '600', color: C.textSub, marginBottom: '4px', display: 'block' }
+
+  const hasDateFilter = dateFrom || dateTo
 
   return (
     <div style={{ padding: '28px 24px', fontFamily: "'Inter', sans-serif", backgroundColor: C.bg, minHeight: '100vh' }}>
@@ -83,26 +98,62 @@ function AdminParkingHistory() {
 
       <div style={{
         backgroundColor: C.card, border: `1px solid ${C.border}`, borderRadius: '14px',
-        padding: '16px', display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap',
-        boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
+        padding: '16px', marginBottom: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
       }}>
-        <input
-          style={{ ...inputStyle, width: '200px' }}
-          type="text"
-          placeholder="Lọc biển số..."
-          value={plateFilter}
-          onChange={(e) => setPlateFilter(e.target.value)}
-        />
-        <select
-          style={{ ...inputStyle, width: '160px' }}
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-        >
-          <option value="">Tất cả trạng thái</option>
-          <option value="in_progress">Đang gửi</option>
-          <option value="completed">Đã ra</option>
-          <option value="cancelled">Hủy</option>
-        </select>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div>
+            <label style={labelStyle}>Biển số</label>
+            <input
+              style={{ ...inputStyle, width: '180px' }}
+              type="text"
+              placeholder="Lọc biển số..."
+              value={plateFilter}
+              onChange={(e) => setPlateFilter(e.target.value)}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Trạng thái</label>
+            <select
+              style={{ ...inputStyle, width: '150px' }}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="">Tất cả</option>
+              <option value="in_progress">Đang gửi</option>
+              <option value="completed">Đã ra</option>
+              <option value="cancelled">Hủy</option>
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Từ</label>
+            <input
+              style={{ ...inputStyle, width: '180px' }}
+              type="datetime-local"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Đến</label>
+            <input
+              style={{ ...inputStyle, width: '180px' }}
+              type="datetime-local"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+            />
+          </div>
+          {hasDateFilter && (
+            <button
+              onClick={() => { setDateFrom(''); setDateTo('') }}
+              style={{
+                ...inputStyle, cursor: 'pointer', color: C.textSub,
+                backgroundColor: '#f1f5f9', border: `1px solid ${C.border}`,
+              }}
+            >
+              Xóa ngày
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -179,7 +230,7 @@ function AdminParkingHistory() {
 
       {displayed.length > 0 && (
         <div style={{ marginTop: '12px', fontSize: '13px', color: C.textSub }}>
-          {displayed.length} bản ghi{plateFilter || statusFilter ? ' (đang lọc)' : ''}
+          {displayed.length} bản ghi{plateFilter || statusFilter || hasDateFilter ? ' (đang lọc)' : ''}
         </div>
       )}
     </div>

@@ -1,5 +1,6 @@
 import StatCard from '../../components/common/StatCard'
 import DataTable from '../../components/common/DataTable'
+import ParkingSlotGrid from '../../components/common/ParkingSlotGrid'
 import { adminStats, vehicles } from '../../data/mockData'
 
 function DashboardAdmin() {
@@ -107,7 +108,9 @@ function DashboardAdmin() {
         </div>
       </div>
 
-      <h3 className="page-title">Xe vào/ra gần đây</h3>
+      <ParkingSlotGrid />
+
+      <h3 className="page-title" style={{ marginTop: '32px' }}>Xe vào/ra gần đây</h3>
       <DataTable columns={columns} data={vehicles} />
     </div>
   )
