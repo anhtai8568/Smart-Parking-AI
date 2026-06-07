@@ -39,7 +39,7 @@ function Header({ title }) {
             Xin chào, {currentUser?.fullName || 'Người dùng'}
           </div>
           <div style={{ color: '#6b7280', fontSize: '13px' }}>
-            {currentUser?.role === 'admin' ? 'Quản trị hệ thống' : 'Người dùng hàng tháng'}
+            {currentUser?.role === 'admin' ? 'Quản trị hệ thống' : currentUser?.role === 'guard' ? 'Bảo vệ bãi đỗ xe' : 'Người dùng hàng tháng'}
           </div>
         </div>
       </div>

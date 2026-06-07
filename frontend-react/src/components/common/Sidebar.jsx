@@ -18,7 +18,12 @@ function Sidebar({ type }) {
     { label: 'Thông tin tài khoản', path: '/user/account' },
   ]
 
-  const menus = type === 'admin' ? adminMenus : userMenus
+  const guardMenus = [
+    { label: 'Quản lý vào ra', path: '/guard/dashboard' },
+    { label: 'Lịch sử xe vào/ra', path: '/guard/parking-history' },
+  ]
+
+  const menus = type === 'admin' ? adminMenus : type === 'guard' ? guardMenus : userMenus
 
   const handleLogout = () => {
     localStorage.removeItem('currentUser')
@@ -31,7 +36,7 @@ function Sidebar({ type }) {
       <div className="logo-wrap">
         <div className="logo">SMART PARKING AI</div>
         <div className="logo-sub">
-          {type === 'admin' ? 'Bảng điều khiển quản trị' : 'Cổng thông tin người dùng'}
+          {type === 'admin' ? 'Bảng điều khiển quản trị' : type === 'guard' ? 'Cổng bảo vệ' : 'Cổng thông tin người dùng'}
         </div>
       </div>
 

@@ -4,13 +4,14 @@ import Header from '../components/common/Header'
 
 function GuardLayout() {
   return (
-    <div className="dashboard-layout">
+    <div className="layout">
       <Sidebar type="guard" />
-
-      <main className="main-content">
-        <Header />
-        <Outlet />
-      </main>
+      <div className="main-area">
+        <Header title="Cổng bảo vệ" />
+        <div className="page-content">
+          <Outlet />
+        </div>
+      </div>
     </div>
   )
 }

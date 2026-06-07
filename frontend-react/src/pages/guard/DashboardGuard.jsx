@@ -1,22 +1,6 @@
 function DashboardGuard() {
-  const handleVehicleIn = () => {
-    alert('Đã bấm nút Xe vào')
-  }
-
-  const handleVehicleOut = () => {
-    alert('Đã bấm nút Xe ra')
-  }
-
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h2 className="page-title">Tổng quan bảo vệ</h2>
-          <p className="page-subtitle">
-            Theo dõi camera và xử lý lượt xe vào/ra bãi đỗ.
-          </p>
-        </div>
-      </div>
 
       <div className="lane-split single-gate">
         <div className="card compare-card lane-exit">
@@ -24,7 +8,7 @@ function DashboardGuard() {
             <div>
               <h3 className="card-title">Quản lý vào ra</h3>
             </div>
-            <span className="match-badge success">Chế độ: Bảo vệ</span>
+            <span className="match-badge success">Chế độ: Tự động</span>
           </div>
 
           <div className="lane-exit-body">
@@ -46,24 +30,6 @@ function DashboardGuard() {
                   alt="Camera xe ra"
                 />
               </div>
-            </div>
-
-            <div className="guard-action-buttons">
-              <button
-                type="button"
-                className="guard-action-btn btn-in"
-                onClick={handleVehicleIn}
-              >
-                Xe vào
-              </button>
-
-              <button
-                type="button"
-                className="guard-action-btn btn-out"
-                onClick={handleVehicleOut}
-              >
-                Xe ra
-              </button>
             </div>
 
             <div className="lane-notice">
