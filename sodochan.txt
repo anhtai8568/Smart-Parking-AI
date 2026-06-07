@@ -37,19 +37,12 @@ S6: D42
 dây nâu: cực dương
 dây đen: cực âm
 
-// Arduino Uno (2 thẻ RFID - cổng vào / cổng ra)
-// SPI chung
+// Arduino Uno (Dùng chung 1 đầu đọc RFID cho cả cổng vào/ra)
 SCK: D13
 MOSI: D11
 MISO: D12
-
+SS(SDA): D10
+RST: D9
 3.3V: 3.3V
 GND: GND
 
-// RFID cổng vào
-SS(SDA): D10
-RST: D9
-
-// RFID cổng ra
-SS(SDA): D8
-RST: D7

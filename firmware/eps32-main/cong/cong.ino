@@ -4,8 +4,8 @@
 
 // ===== CẤU HÌNH WI-FI & MQTT =====
 const char* ssid = "Cun Cun";             // <--- Thay bằng tên Wi-Fi của bạn
-const char* password = "23456789";     // <--- Thay bằng mật khẩu Wi-Fi của bạn
-const char* mqtt_server = "YOUR_MQTT_BROKER_IP"; // <--- Thay bằng IP máy tính chạy Docker (Ví dụ: 192.168.1.15)
+const char* password = "12345689";     // <--- Thay bằng mật khẩu Wi-Fi của bạn
+const char* mqtt_server = "192.168.1.95"; // <--- Thay bằng IP máy tính chạy Docker (Ví dụ: 192.168.1.15)
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -29,6 +29,12 @@ int soChoTrong = -1;
 
 // ===== UART với Uno =====
 HardwareSerial SerialUno(1); // UART1
+
+// ===== Trạng thái kết nối UART =====
+bool receivedMega = false;
+bool receivedUno = false;
+unsigned long lastConnectionCheck = 0;
+const unsigned long checkInterval = 3000; // Cảnh báo định kỳ mỗi 3 giây
 
 // Mảng lưu trạng thái chi tiết của 6 chỗ đỗ (false = trống, true = có xe)
 bool slotStatus[6] = {false, false, false, false, false, false}; 
@@ -164,10 +170,27 @@ void loop() {
   }
   client.loop();
 
+  // ===== KIỂM TRA TRẠNG THÁI KẾT NỐI UART (ĐỊNH KỲ) =====
+  if (millis() - lastConnectionCheck >= checkInterval) {
+    lastConnectionCheck = millis();
+    if (!receivedMega) {
+      Serial.println("[UART STATUS] CHUA nhan duoc tin hieu tu ARDUINO MEGA! (Kiem tra day TX Mega -> RX16 ESP32)");
+    }
+    if (!receivedUno) {
+      Serial.println("[UART STATUS] CHUA nhan duoc tin hieu tu ARDUINO UNO! (Kiem tra day TX Uno -> RX26 ESP32, hoac quet the thu)");
+    }
+  }
+
   // ===== 1. NHẬN VÀ BÓC TÁCH DỮ LIỆU TỪ MEGA =====
   if (SerialMega.available()) {
     String data = SerialMega.readStringUntil('\n');
     data.trim();
+
+    if (!receivedMega) {
+      Serial.print("[UART STATUS] -> DA NHAN DUOC TIN HIEU TU ARDUINO MEGA! Du lieu dau tien: ");
+      Serial.println(data);
+      receivedMega = true;
+    }
 
     // 1.1 Tách tổng số chỗ trống
     int idx = data.indexOf("EMPTY:");
@@ -217,6 +240,12 @@ void loop() {
   if (SerialUno.available()) {
     String data = SerialUno.readStringUntil('\n');
     data.trim();
+
+    if (!receivedUno) {
+      Serial.print("[UART STATUS] -> DA NHAN DUOC TIN HIEU TU ARDUINO UNO! Du lieu dau tien: ");
+      Serial.println(data);
+      receivedUno = true;
+    }
 
     if (enableScanID) {
       if (data.startsWith("IN:")) {

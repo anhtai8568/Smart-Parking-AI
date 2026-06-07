@@ -31,6 +31,14 @@ void setup() {
 
 void loop() {
   quetthe();
+  
+  // Gửi heartbeat định kỳ 5 giây để ESP32 biết Uno vẫn hoạt động
+  static unsigned long lastHeartbeat = 0;
+  if (millis() - lastHeartbeat > 5000) {
+    Serial.println("UNO_HEARTBEAT");
+    lastHeartbeat = millis();
+  }
+  
   delay(50);
 }
 
