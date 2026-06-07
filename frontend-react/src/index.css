@@ -992,3 +992,93 @@ table tbody tr:hover {
     align-items: stretch;
   }
 }
+/* =========================
+   Dashboard Guard
+   ========================= */
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.page-header .page-title {
+  margin-bottom: 6px;
+}
+
+.page-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.guard-action-buttons {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  margin: 20px 0;
+  flex-wrap: wrap;
+}
+
+.guard-action-btn {
+  min-width: 160px;
+  height: 50px;
+  padding: 0 24px;
+  border: none;
+  border-radius: 14px;
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 15px;
+  cursor: pointer;
+  transition: 0.2s ease;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+}
+
+.guard-action-btn:hover {
+  transform: translateY(-2px);
+  opacity: 0.92;
+}
+
+.guard-action-btn:active {
+  transform: translateY(0);
+}
+
+.guard-action-btn.btn-in {
+  background: linear-gradient(135deg, #16a34a, #22c55e);
+}
+
+.guard-action-btn.btn-out {
+  background: linear-gradient(135deg, #dc2626, #ef4444);
+}
+
+@media (max-width: 900px) {
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .guard-action-buttons {
+    gap: 12px;
+  }
+
+  .guard-action-btn {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .lane-exit-frames {
+    grid-template-columns: 1fr;
+  }
+
+  .lane-split.single-gate .frame-vehicle {
+    height: 260px;
+  }
+
+  .lane-split.single-gate .lane-exit-plates .plate-block {
+    max-width: 100%;
+  }
+}
