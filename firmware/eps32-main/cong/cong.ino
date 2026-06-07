@@ -3,8 +3,8 @@
 #include <PubSubClient.h>
 
 // ===== CẤU HÌNH WI-FI & MQTT =====
-const char* ssid = "YOUR_WIFI_SSID";             // <--- Thay bằng tên Wi-Fi của bạn
-const char* password = "YOUR_WIFI_PASSWORD";     // <--- Thay bằng mật khẩu Wi-Fi của bạn
+const char* ssid = "Cun Cun";             // <--- Thay bằng tên Wi-Fi của bạn
+const char* password = "23456789";     // <--- Thay bằng mật khẩu Wi-Fi của bạn
 const char* mqtt_server = "YOUR_MQTT_BROKER_IP"; // <--- Thay bằng IP máy tính chạy Docker (Ví dụ: 192.168.1.15)
 
 WiFiClient espClient;

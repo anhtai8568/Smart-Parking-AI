@@ -1,0 +1,103 @@
+================================================================================
+                    QUY TRÌNH HOẠT ĐỘNG TOÀN DIỆN HỆ THỐNG SMART PARKING AI
+================================================================================
+
+Tài liệu này mô tả chi tiết quy trình đăng ký, kiểm soát vào/ra, cơ chế xác thực kép (Double Check) và giao diện giám sát của bảo vệ trong hệ thống bãi xe thông minh.
+
+--------------------------------------------------------------------------------
+1. PHÂN LOẠI PHƯƠNG TIỆN VÀ QUY TRÌNH CHI TIẾT
+--------------------------------------------------------------------------------
+
+1.1. XE Ô TÔ ĐĂNG KÝ THÁNG (Sử dụng Mã nhận diện thông minh AprilTag + Biển số xe)
+   * Đăng ký hệ thống:
+     - Người dùng (hoặc Quản trị viên) nhập thông tin cơ bản của xe ô tô (Biển số xe, Loại xe: Ô tô, Tên chủ xe, Số điện thoại...).
+     - Nhấn nút "Tạo mã AprilTag": Hệ thống sẽ băm (hash) biển số xe để sinh ra một ID AprilTag duy nhất (từ 0 đến 586).
+     - Lưu thông tin xe kèm theo trường dữ liệu `arucoCode` (hoặc `arucoId`, đại diện cho AprilTag ID) vào cơ sở dữ liệu.
+     - Người dùng tải hình ảnh mã AprilTag về thiết bị cá nhân để in ra dán lên mặt trước kính lái xe hoặc hiển thị qua điện thoại di động.
+   * Quy trình Vào/Ra và Xác thực kép (Double Check):
+     - Khi xe tiến đến cổng, camera quét đồng thời cả hai yếu tố:
+       + Nhận diện mã AprilTag (giải mã ra ID của xe đăng ký).
+       + Nhận diện biển số xe thực tế bằng mô hình AI (YOLO + CRNN).
+     - Hệ thống đối chiếu xem Biển số xe đọc được bằng AI có trùng khớp với Biển số xe đã đăng ký gắn với mã AprilTag đó hay không.
+     - Nếu trùng khớp: Cổng barrier tự động mở.
+     - Nếu phát hiện sai lệch (Hệ thống đưa ra cảnh báo): Quyết định mở cổng thuộc về bảo vệ sau khi đối chiếu ảnh trên màn hình giám sát.
+
+1.2. XE Ô TÔ VÃNG LAI (Sử dụng Thẻ RFID + Biển số xe)
+   * Quy trình Lượt Vào:
+     - Xe ô tô vãng lai đi vào cổng.
+     - Hệ thống camera AI nhận diện và trích xuất Biển số xe thực tế.
+     - Nhân viên bảo vệ phát một thẻ RFID (vé lượt) cho tài xế và tiến hành quét thẻ trên đầu đọc RFID.
+     - Hệ thống lưu bản ghi lượt vào gồm: Mã thẻ RFID được cấp + Biển số xe nhận diện được + Ảnh chụp xe lúc vào + Thời gian vào.
+     - Barrier mở cho xe vào bãi.
+   * Quy trình Lượt Ra và Xác thực kép (Double Check):
+     - Xe tiến ra cổng, tài xế trả lại thẻ RFID để quét qua đầu đọc.
+     - Camera AI tiến hành quét nhận diện lại Biển số xe thực tế lúc ra.
+     - Hệ thống đối chiếu xem Biển số xe lúc ra có trùng khớp với Biển số xe được ghi nhận lúc vào hay không.
+     - Nếu trùng khớp: Tính tiền gửi xe, xác nhận thanh toán và tự động mở barrier.
+     - Nếu phát hiện sai lệch: Hệ thống cảnh báo đỏ và giữ đóng barrier để bảo vệ kiểm tra.
+
+1.3. XE MÁY ĐĂNG KÝ THÁNG (Sử dụng Thẻ RFID định danh + Biển số xe)
+   * Đăng ký hệ thống:
+     - Người dùng nhập thông tin đăng ký xe máy (Biển số xe, Loại xe: Xe máy, Chủ xe...).
+     - Quét thẻ RFID tháng trên đầu đọc tại quầy đăng ký để nhận mã ID thẻ.
+     - Hệ thống gán (mapping) mã ID thẻ RFID này trực tiếp cho riêng chiếc xe máy và tài khoản người dùng đó trong cơ sở dữ liệu.
+   * Quy trình Vào/Ra và Xác thực kép (Double Check):
+     - Người dùng quẹt thẻ RFID tháng lên đầu đọc.
+     - Đồng thời, camera AI tự động chụp và nhận diện Biển số xe máy thực tế.
+     - Hệ thống đối chiếu xem biển số xe đã đăng ký đi kèm thẻ này có trùng khớp với Biển số xe thực tế đọc được từ camera hay không.
+     - Nếu trùng khớp: Mở barrier cho xe qua.
+     - Nếu phát hiện sai lệch: Hệ thống đưa ra cảnh báo để bảo vệ xử lý thủ công.
+
+1.4. XE MÁY VÃNG LAI (Sử dụng Thẻ RFID lượt + Biển số xe)
+   * Quy trình Lượt Vào:
+     - Người dùng đi xe máy vào cổng, quẹt thẻ RFID vãng lai lên đầu đọc.
+     - Camera AI nhận diện Biển số xe máy thực tế và lưu vào cơ sở dữ liệu cùng với mã ID thẻ RFID vãng lai đó.
+     - Mở cổng cho xe vào.
+   * Quy trình Lượt Ra và Xác thực kép (Double Check):
+     - Người dùng tiến ra cổng và quẹt lại thẻ RFID vãng lai.
+     - Camera AI nhận diện Biển số xe máy thực tế lúc ra.
+     - Hệ thống đối chiếu xem Biển số xe máy lúc ra có trùng khớp với Biển số xe máy lúc vào hay không.
+     - Nếu trùng khớp: Xác nhận cho xe ra thành công và mở cổng.
+     - Nếu phát hiện sai lệch: Hệ thống cảnh báo lệch biển số để bảo vệ xử lý.
+
+--------------------------------------------------------------------------------
+2. GIAO DIỆN GIÁM SÁT CỦA BẢO VỆ VÀ CƠ CHẾ ĐIỀU KHIỂN THỦ CÔNG
+--------------------------------------------------------------------------------
+
+Hệ thống được thiết kế tích hợp vai trò quyết định của nhân viên bảo vệ nhằm đảm bảo vận hành trơn tru trong thực tế:
+
+2.1. Màn hình giám sát trực quan (Side-by-Side Monitoring)
+   - Giao diện Admin/Bảo vệ hiển thị song song hai khung hình:
+     + Khung hình bên trái: Ảnh chụp và thông tin xe lúc vào bãi (Biển số xe nhận diện được, Thời gian vào, Ảnh chụp thực tế).
+     + Khung hình bên phải: Ảnh chụp và thông tin xe đang đứng ở cổng ra thực tế hiện tại.
+   - Hiển thị bảng đối chiếu ký tự biển số: Đánh dấu màu xanh nếu khớp và màu đỏ tại các vị trí ký tự bị lệch (Ví dụ: `29A-123.45` vs `29A-123.46`).
+
+2.2. Cơ chế cảnh báo tự động
+   - Khi có sự sai lệch giữa biển số xe vào và ra, hoặc giữa mã AprilTag/Thẻ tháng với biển số xe thực tế, hệ thống sẽ:
+     + Phát cảnh báo âm thanh hoặc nhấp nháy đỏ trên màn hình giám sát.
+     + Giữ nguyên trạng thái barrier (không tự động mở rào).
+
+2.3. Nút mở rào cưỡng bức (Manual Override)
+   - Trên giao diện của bảo vệ luôn tích hợp nút điều khiển **"Mở cổng"** (Open Gate).
+   - Khi nhận thấy biển số xe thực tế trùng khớp (chỉ bị camera nhận diện sai ký tự do mờ hoặc bẩn), hoặc trường hợp khẩn cấp, bảo vệ sẽ bấm nút này.
+   - Hệ thống sẽ gửi bản tin MQTT điều khiển đến ESP32 để kích hoạt Servo mở barrier ngay lập tức, giải phóng xe mà không gây ùn tắc bãi đỗ.
+
+--------------------------------------------------------------------------------
+3. THAY ĐỔI VỀ CẤU TRÚC DỮ LIỆU TRONG DATABASE (MONGODB)
+--------------------------------------------------------------------------------
+
+Để phục vụ quy trình trên, cấu trúc cơ sở dữ liệu cần đảm bảo các trường sau:
+
+* Trường dữ liệu cho Xe/Thẻ tháng:
+  - Bổ sung trường `arucoCode` hoặc `arucoId` (Kiểu số: 0 - 586, ứng với AprilTag ID) cho các xe ô tô đăng ký vé tháng.
+  - Bổ sung trường `rfidCardId` (Liên kết với bảng thẻ RFID) cho các xe máy đăng ký vé tháng.
+  
+* Trường dữ liệu cho Lịch sử Vào/Ra (Parking Sessions):
+  - `rfidCardId`: Mã thẻ được quét (vãng lai hoặc tháng).
+  - `plateIn`: Biển số nhận dạng được lúc vào.
+  - `plateOut`: Biển số nhận dạng được lúc ra.
+  - `imageIn`: Đường dẫn ảnh chụp lúc vào để hiển thị đối chiếu.
+  - `imageOut`: Đường dẫn ảnh chụp lúc ra để hiển thị đối chiếu.
+  - `status`: Trạng thái lượt gửi (`in_parking` | `completed` | `warning`).
+
+================================================================================

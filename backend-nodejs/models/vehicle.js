@@ -37,6 +37,10 @@ const vehicleSchema = new mongoose.Schema(
             enum: ['active', 'inactive'],
             default: 'active',
         },
+        arucoId: {
+            type: Number,
+            default: null,
+        },
     },
     {
         timestamps: true,

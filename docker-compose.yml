@@ -7,19 +7,10 @@ services:
       dockerfile: Dockerfile
     ports:
       - "4000:4000"
+    environment:
+      - MQTT_BROKER_URL=mqtt://mosquitto:1883
     volumes:
       - ./backend-nodejs:/app
-      - /app/node_modules
-    restart: always
-
-  frontend:
-    build:
-      context: ./frontend-react
-      dockerfile: Dockerfile
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend-react:/app
       - /app/node_modules
     restart: always
 

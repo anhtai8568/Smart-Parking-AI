@@ -158,8 +158,8 @@ async function seed() {
     await PricingPolicy.create({
         name: 'standard-2026',
         isActive: true,
-        monthlyPriceMotorbike: 300000,
-        monthlyPriceCar: 700000,
+        monthlyPriceMotorbike: 1000,
+        monthlyPriceCar: 2000,
         singlePriceMotorbike: 5000,
         singlePriceCar: 20000,
         effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),

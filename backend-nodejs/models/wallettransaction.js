@@ -77,7 +77,7 @@ const walletTransactionSchema = new mongoose.Schema(
 walletTransactionSchema.index({ userId: 1, createdAt: -1 })
 walletTransactionSchema.index({ sessionId: 1 })
 walletTransactionSchema.index({ type: 1, status: 1 })
-walletTransactionSchema.index({ provider: 1, providerTransactionId: 1 }, { unique: true, sparse: true })
+walletTransactionSchema.index({ provider: 1, providerTransactionId: 1 }, { unique: true, partialFilterExpression: { providerTransactionId: { $type: 'string' } } })
 
 const WalletTransaction = mongoose.model('WalletTransaction', walletTransactionSchema)
 

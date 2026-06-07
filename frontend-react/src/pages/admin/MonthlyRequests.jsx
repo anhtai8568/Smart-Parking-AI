@@ -116,6 +116,7 @@ function MonthlyRequests() {
         { key: 'vehicleType', title: 'Loại xe' },
         { key: 'months', title: 'Thời hạn' },
         { key: 'totalAmount', title: 'Tổng tiền' },
+        { key: 'notes', title: 'Ghi chú / Tranh chấp' },
         { key: 'createdAt', title: 'Ngày đăng ký' },
         { key: 'action', title: 'Xử lý' },
     ]
@@ -146,29 +147,43 @@ function MonthlyRequests() {
     ]
 
     // --- Row builders ---
-    const pendingRows = pendingItems.map((item) => ({
-        ...item,
-        action: (
-            <div style={{ display: 'flex', gap: '8px' }}>
-                <button
-                    className="primary-btn"
-                    style={{ height: '38px' }}
-                    disabled={isLoading}
-                    onClick={() => handleApprove(item.id)}
-                >
-                    Duyệt
-                </button>
-                <button
-                    className="secondary-btn"
-                    style={{ height: '38px' }}
-                    disabled={isLoading}
-                    onClick={() => handleReject(item.id)}
-                >
-                    Từ chối
-                </button>
-            </div>
-        ),
-    }))
+    const pendingRows = pendingItems.map((item) => {
+        const isDisputed = item.notes && (item.notes.includes('TRANH CHẤP') || item.notes.includes('TRANG CHẤP'))
+        return {
+            ...item,
+            licensePlate: isDisputed ? (
+                <div>
+                    <span style={{ fontWeight: 'bold', color: '#dc2626' }}>{item.licensePlate}</span>
+                    <div style={{ fontSize: '11px', color: '#dc2626', marginTop: '2px', fontWeight: 'bold' }}>
+                        ⚠️ Tranh chấp chính chủ
+                    </div>
+                </div>
+            ) : item.licensePlate,
+            notes: isDisputed ? (
+                <span style={{ color: '#dc2626', fontWeight: '500', fontSize: '13px' }}>{item.notes}</span>
+            ) : item.notes,
+            action: (
+                <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                        className="primary-btn"
+                        style={{ height: '38px' }}
+                        disabled={isLoading}
+                        onClick={() => handleApprove(item.id)}
+                    >
+                        Duyệt
+                    </button>
+                    <button
+                        className="secondary-btn"
+                        style={{ height: '38px' }}
+                        disabled={isLoading}
+                        onClick={() => handleReject(item.id)}
+                    >
+                        Từ chối
+                    </button>
+                </div>
+            ),
+        }
+    })
 
     const approvedRows = approvedItems.map((item) => {
         const isPaid = item.rawPaymentStatus === 'paid'

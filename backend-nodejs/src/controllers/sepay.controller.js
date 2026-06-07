@@ -1,6 +1,17 @@
 import crypto from 'crypto'
 import UserPackage from '../../models/userpackage.js'
 import WalletTransaction from '../../models/wallettransaction.js'
+import Vehicle from '../../models/vehicle.js'
+import User from '../../models/user.js'
+import { isMailerConfigured, sendMail } from '../utils/mailer.js'
+
+function getAprilTagIdFromLicensePlate(licensePlate) {
+    const cleanPlate = licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()
+    if (!cleanPlate) return 0
+    const hash = crypto.createHash('md5').update(cleanPlate).digest('hex')
+    const bigIntHash = BigInt('0x' + hash)
+    return Number(bigIntHash % 587n)
+}
 
 const SEPAY_WEBHOOK_SECRET = process.env.SEPAY_WEBHOOK_SECRET || ''
 const SEPAY_WEBHOOK_API_KEY = process.env.SEPAY_WEBHOOK_API_KEY || ''
@@ -201,7 +212,62 @@ export async function handleSePayWebhook(req, res) {
         subscription.paymentReference = payload.referenceCode || null
         subscription.paymentReceivedAt = new Date()
 
+        // Tự động kích hoạt (active) cho xe ô tô dùng AprilTag
+        if (subscription.vehicleType === 'car') {
+            const start = new Date()
+            const end = addMonths(start, subscription.months)
+            subscription.status = 'active'
+            subscription.startDate = start
+            subscription.endDate = end
+        }
+
         await subscription.save()
+
+        // Nếu là xe ô tô vừa được kích hoạt, cập nhật Vehicle và gửi Email AprilTag
+        if (subscription.vehicleType === 'car' && subscription.status === 'active') {
+            try {
+                const vehicle = await Vehicle.findById(subscription.vehicleId)
+                if (vehicle) {
+                    const aprilTagId = getAprilTagIdFromLicensePlate(vehicle.licensePlate)
+                    vehicle.arucoId = aprilTagId
+                    if (vehicle.userId && vehicle.userId.toString() !== subscription.userId.toString()) {
+                        console.log(`[DISPUTE RESOLVED VIA SEPAY] Transferring vehicle ${vehicle.licensePlate} ownership from ${vehicle.userId} to ${subscription.userId}`)
+                        vehicle.userId = subscription.userId
+                    }
+                    await vehicle.save()
+
+                    // Gửi email thông báo tự động kích hoạt thành công
+                    const user = await User.findById(subscription.userId)
+                    if (user && user.email && isMailerConfigured()) {
+                        const directDownloadUrl = `http://localhost:8000/api/aruco/generate/${encodeURIComponent(vehicle.licensePlate)}?size=500&label=true`
+                        
+                        await sendMail({
+                            to: user.email,
+                            subject: '[Smart Parking AI] Kích hoạt tự động vé tháng xe ô tô thành công',
+                            text: `Chúc mừng! Vé tháng của bạn đã được thanh toán và kích hoạt tự động thành công cho xe ${vehicle.brand || ''} (Biển số: ${vehicle.licensePlate}).\nTải mã AprilTag của bạn tại: ${directDownloadUrl}`,
+                            html: `
+                                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                                    <h3 style="color: #16a34a;">✓ Thanh toán thành công & Vé tháng đã được kích hoạt!</h3>
+                                    <p>Hệ thống ghi nhận giao dịch thành công qua SePay cho xe: <strong>${vehicle.brand || 'Xe ô tô'} - Biển số: ${vehicle.licensePlate}</strong></p>
+                                    <p>Gói tháng của bạn đã hoạt động. Vui lòng tải mã nhận diện AprilTag dưới đây:</p>
+                                    <div style="text-align: center; margin: 30px 0;">
+                                        <a href="${directDownloadUrl}" style="display: inline-block; padding: 12px 28px; background-color: #16a34a; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; box-shadow: 0 4px 10px rgba(22,163,74,0.3);">📥 TẢI VỀ MÃ APRILTAG</a>
+                                    </div>
+                                    <p style="font-size: 13px; color: #64748b; line-height: 1.6;">
+                                        In mã này ra dán trên kính lái xe hoặc xuất trình trên điện thoại khi đi qua cổng để camera AI tự động mở barrier.
+                                    </p>
+                                    <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+                                    <p style="font-size: 12px; color: #94a3b8; text-align: center; margin: 0;">Hệ thống Smart Parking AI</p>
+                                </div>
+                            `
+                        })
+                        console.log(`Automatic activation email sent to ${user.email} for vehicle ${vehicle.licensePlate}`)
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to auto-activate AprilTag or send email on webhook:', err.message)
+            }
+        }
 
         await createWalletTransaction({
             subscription,

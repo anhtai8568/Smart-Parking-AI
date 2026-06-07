@@ -2,6 +2,16 @@ import PricingPolicy from '../../models/pricingpolicy.js'
 import User from '../../models/user.js'
 import UserPackage from '../../models/userpackage.js'
 import Vehicle from '../../models/vehicle.js'
+import crypto from 'crypto'
+import { isMailerConfigured, sendMail } from '../utils/mailer.js'
+
+function getAprilTagIdFromLicensePlate(licensePlate) {
+    const cleanPlate = licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()
+    if (!cleanPlate) return 0
+    const hash = crypto.createHash('md5').update(cleanPlate).digest('hex')
+    const bigIntHash = BigInt('0x' + hash)
+    return Number(bigIntHash % 587n)
+}
 
 const VEHICLE_TYPES = ['car', 'motorbike']
 const PAYMENT_METHODS = ['cash', 'bank_transfer', 'sepay']
@@ -187,7 +197,40 @@ export async function createSubscription(req, res) {
             return res.status(400).json({ status: 'error', message: 'Pricing policy is not configured' })
         }
 
-        const vehicle = await resolveVehicle({ vehicleId, licensePlate, vehicleType: resolvedVehicleType, brand, color, userId: user._id })
+        const plate = typeof licensePlate === 'string' ? licensePlate.trim().toUpperCase() : ''
+        const isDispute = req.body.isDispute === true || req.body.isDispute === 'true'
+        let vehicle = null
+        let disputeNotes = ''
+
+        if (plate) {
+            const existingVehicle = await Vehicle.findOne({ licensePlate: plate })
+            if (existingVehicle && existingVehicle.userId && existingVehicle.userId.toString() !== user._id.toString()) {
+                if (!isDispute) {
+                    const conflictingUser = await User.findById(existingVehicle.userId)
+                    const maskedName = conflictingUser
+                        ? conflictingUser.username.slice(0, 2) + '*'.repeat(Math.max(1, conflictingUser.username.length - 2))
+                        : '***'
+                    return res.status(409).json({
+                        status: 'conflict',
+                        code: 'DUPLICATE_PLATE',
+                        message: `Biển số xe ${plate} đã được đăng ký bởi tài khoản khác (${maskedName}).`,
+                        details: {
+                            licensePlate: plate,
+                            conflictingUser: maskedName
+                        }
+                    })
+                } else {
+                    vehicle = existingVehicle
+                    disputeNotes = `[TRANH CHẤP CHÍNH CHỦ] Biển số bị trùng lặp với tài khoản khác. Yêu cầu xác minh từ người dùng.`
+                    console.warn(`[SYSTEM ALERT] Duplicate plate dispute submitted for ${plate} by user: ${user.username}`)
+                }
+            }
+        }
+
+        if (!vehicle) {
+            vehicle = await resolveVehicle({ vehicleId, licensePlate, vehicleType: resolvedVehicleType, brand, color, userId: user._id })
+        }
+
         if (!vehicle) {
             return res.status(400).json({ status: 'error', message: 'Vehicle information is required' })
         }
@@ -201,7 +244,7 @@ export async function createSubscription(req, res) {
             vehicleId: vehicle._id,
             status: { $in: ['pending', 'approved'] },
         })
-        if (existingInProgress) {
+        if (existingInProgress && !isDispute) {
             return res.status(409).json({ status: 'error', message: 'Vehicle already has a pending or approved request' })
         }
 
@@ -228,6 +271,7 @@ export async function createSubscription(req, res) {
             status: 'pending',
             startDate: null,
             endDate: null,
+            notes: disputeNotes,
         })
 
         if (!user.defaultVehicleId) {
@@ -395,6 +439,66 @@ export async function issueCard(req, res) {
         subscription.endDate = end
 
         await subscription.save()
+
+        // Transfer vehicle ownership if it is assigned to someone else (Dispute resolution)
+        try {
+            const vehicle = await Vehicle.findById(subscription.vehicleId)
+            if (vehicle) {
+                if (vehicle.userId && vehicle.userId.toString() !== subscription.userId.toString()) {
+                    console.log(`[DISPUTE RESOLVED] Transferring vehicle ${vehicle.licensePlate} ownership from ${vehicle.userId} to ${subscription.userId}`)
+                    vehicle.userId = subscription.userId
+                    await vehicle.save()
+                }
+            }
+        } catch (err) {
+            console.error('Failed to resolve vehicle dispute transfer:', err.message)
+        }
+
+        // logic for car (AprilTag generation and email notification)
+        if (subscription.vehicleType === 'car') {
+            try {
+                const vehicle = await Vehicle.findById(subscription.vehicleId)
+                if (vehicle) {
+                    const aprilTagId = getAprilTagIdFromLicensePlate(vehicle.licensePlate)
+                    vehicle.arucoId = aprilTagId
+                    if (vehicle.userId && vehicle.userId.toString() !== subscription.userId.toString()) {
+                        vehicle.userId = subscription.userId
+                    }
+                    await vehicle.save()
+
+                    // Send email notification to user
+                    const user = await User.findById(subscription.userId)
+                    if (user && user.email && isMailerConfigured()) {
+                        const directDownloadUrl = `http://localhost:8000/api/aruco/generate/${encodeURIComponent(vehicle.licensePlate)}?size=500&label=true`
+                        
+                        await sendMail({
+                            to: user.email,
+                            subject: '[Smart Parking AI] Đăng ký vé tháng xe ô tô thành công',
+                            text: `Chúc mừng! Đăng ký vé tháng của bạn đã được kích hoạt thành công cho xe ${vehicle.brand || ''} (Biển số: ${vehicle.licensePlate}).\nTải mã AprilTag của bạn tại: ${directDownloadUrl}`,
+                            html: `
+                                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                                    <h3 style="color: #16a34a;">Chúc mừng! Đăng ký vé tháng của bạn đã được kích hoạt thành công.</h3>
+                                    <p>Thông tin xe: <strong>${vehicle.brand || 'Xe ô tô'} - Biển số: ${vehicle.licensePlate}</strong></p>
+                                    <p>Gói tháng của bạn đã được kích hoạt thành công.</p>
+                                    <p>Vui lòng tải mã nhận diện AprilTag thông minh của bạn bằng cách nhấn vào liên kết bên dưới:</p>
+                                    <div style="text-align: center; margin: 30px 0;">
+                                        <a href="${directDownloadUrl}" style="display: inline-block; padding: 12px 28px; background-color: #16a34a; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; box-shadow: 0 4px 10px rgba(22,163,74,0.3);">📥 TẢI VỀ MÃ APRILTAG</a>
+                                    </div>
+                                    <p style="font-size: 13px; color: #64748b; line-height: 1.6;">
+                                        Sau khi tải về, bạn hãy in ra dán ở góc trước kính lái xe hoặc hiển thị trên điện thoại di động khi đi qua cổng để camera tự động nhận dạng và mở barrier từ xa.
+                                    </p>
+                                    <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+                                    <p style="font-size: 12px; color: #94a3b8; text-align: center; margin: 0;">Hệ thống Smart Parking AI</p>
+                                </div>
+                            `
+                        })
+                        console.log(`Activation email sent successfully to ${user.email} for vehicle ${vehicle.licensePlate}`)
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to generate AprilTag or send activation email:', err.message)
+            }
+        }
 
         return res.json({ status: 'success', data: subscription })
     } catch (error) {

@@ -20,37 +20,47 @@ DA/Smart-Parking-AI/
 
 ---
 
-## Cách 1: Chạy kết hợp Docker & Python (Khuyên dùng - Sử dụng được Webcam)
+## Cách 1: Chạy kết hợp Docker & Chạy Local (Khuyên dùng)
 
-Phương pháp này giúp khởi động nhanh Backend và Frontend bằng Docker, đồng thời chạy AI Server bằng Python trên máy thật để có thể truy cập webcam laptop trực tiếp.
+Phương pháp này sử dụng Docker để chạy nhanh **Backend (Node.js)** và **MQTT Broker (Mosquitto)**, đồng thời chạy **Frontend (React)** và **AI Server (Python)** trực tiếp ở máy thật (local) để tối ưu hiệu năng, tránh lỗi thư viện native (như Rolldown) và giúp AI Server truy cập trực tiếp vào Webcam máy tính.
 
 ### Yêu cầu chuẩn bị
 - Đã cài đặt **Docker Desktop**: https://www.docker.com/products/docker-desktop/
-- Đã cài đặt **Python 3.10** (đã hoàn thành bước cài đặt thư viện tại **Cách 2 -> A3** bên dưới).
+- Đã cài đặt **Node.js** (v20 trở lên) và **Python** (v3.10 trở lên) trên máy thật.
 
 ### Hướng dẫn khởi chạy
-Bạn cần mở **2 cửa sổ terminal riêng**:
 
-#### Terminal 1 — Backend & Giao diện Web (Docker)
+Bạn cần chạy các phần sau:
+
+#### 1. Chạy Backend & MQTT (Sử dụng Docker)
 1. Khởi động ứng dụng **Docker Desktop**.
 2. Mở terminal tại thư mục gốc của dự án (`d:\Đồ án liên ngành`) và chạy lệnh:
    ```powershell
-   docker-compose up --build
+   docker-compose up --build -d
    ```
-   *(Quá trình tải base image và cài đặt sẽ tự động diễn ra. Khi thành công, Frontend và Backend sẽ chạy tại cổng `5173` và `4000`)*
+   *(Lệnh này chạy ngầm Backend tại cổng `4000` và MQTT Broker tại cổng `1883`)*
 
-#### Terminal 2 — AI Server (Python máy thật để dùng Webcam)
-1. Mở một cửa sổ terminal mới tại thư mục gốc của dự án.
-2. Kích hoạt môi trường ảo Python và khởi chạy AI Server:
+#### 2. Chạy Frontend (Local)
+1. Mở một terminal mới tại thư mục `frontend-react`:
+   ```powershell
+   cd frontend-react
+   npm install
+   npm run dev
+   ```
+   *(Frontend sẽ chạy tại cổng `5173`)*
+
+#### 3. Chạy AI Server (Local để dùng Webcam)
+1. Mở một terminal mới tại thư mục gốc của dự án.
+2. Kích hoạt môi trường ảo Python và chạy AI Server:
    ```powershell
    .venv\Scripts\Activate.ps1
    cd ai-server-python
    python main.py
    ```
-   *(AI Server sẽ chạy tại cổng `8000` và kết nối trực tiếp đến webcam laptop)*
+   *(AI Server sẽ chạy tại cổng `8000` và kết nối trực tiếp đến webcam)*
 
 ### Địa chỉ truy cập
-- **Giao diện Web**: `http://localhost:5173` (giao diện sẽ tự động kết nối webcam từ AI server)
+- **Giao diện Web**: `http://localhost:5173`
 - **Backend API**: `http://localhost:4000`
 - **AI Server Docs**: `http://localhost:8000/docs`
 
