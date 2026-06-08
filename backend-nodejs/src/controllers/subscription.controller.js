@@ -408,7 +408,7 @@ export async function approveSubscription(req, res) {
 export async function issueCard(req, res) {
     try {
         const { id } = req.params
-        const { startDate, confirmCash } = req.body
+        const { startDate, confirmCash, rfidCard } = req.body
 
         const subscription = await UserPackage.findById(id)
         if (!subscription) {
@@ -440,18 +440,21 @@ export async function issueCard(req, res) {
 
         await subscription.save()
 
-        // Transfer vehicle ownership if it is assigned to someone else (Dispute resolution)
+        // Transfer vehicle ownership if it is assigned to someone else (Dispute resolution) and save RFID card
         try {
             const vehicle = await Vehicle.findById(subscription.vehicleId)
             if (vehicle) {
+                if (rfidCard) {
+                    vehicle.rfidCard = String(rfidCard).trim().toUpperCase()
+                }
                 if (vehicle.userId && vehicle.userId.toString() !== subscription.userId.toString()) {
                     console.log(`[DISPUTE RESOLVED] Transferring vehicle ${vehicle.licensePlate} ownership from ${vehicle.userId} to ${subscription.userId}`)
                     vehicle.userId = subscription.userId
-                    await vehicle.save()
                 }
+                await vehicle.save()
             }
         } catch (err) {
-            console.error('Failed to resolve vehicle dispute transfer:', err.message)
+            console.error('Failed to resolve vehicle dispute transfer/RFID save:', err.message)
         }
 
         // logic for car (AprilTag generation and email notification)

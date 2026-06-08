@@ -94,11 +94,22 @@ function MonthlyRequests() {
         }
     }
 
-    const handleIssueCard = async (id, isPaid) => {
+    const handleIssueCard = async (id, isPaid, vehicleType) => {
+        let rfidCard = null
+        if (vehicleType === 'Xe máy') {
+            rfidCard = window.prompt('Vui lòng quét thẻ RFID tháng (hoặc nhập mã UID thẻ):')
+            if (rfidCard === null) return
+            rfidCard = rfidCard.trim()
+            if (!rfidCard) {
+                window.alert('Mã thẻ RFID không được để trống đối với xe máy!')
+                return
+            }
+        }
         try {
             setIsLoading(true)
             await api.patch(`/api/subscriptions/${id}/issue-card`, {
                 confirmCash: !isPaid,
+                rfidCard,
             })
             await fetchAll()
         } catch (e) {
@@ -224,7 +235,7 @@ function MonthlyRequests() {
                         className="primary-btn"
                         style={{ height: '36px', opacity: canIssue ? 1 : 0.45, cursor: canIssue ? 'pointer' : 'not-allowed' }}
                         disabled={isLoading || !canIssue}
-                        onClick={() => handleIssueCard(item.id, isPaid)}
+                        onClick={() => handleIssueCard(item.id, isPaid, item.vehicleType)}
                     >
                         Cấp thẻ
                     </button>

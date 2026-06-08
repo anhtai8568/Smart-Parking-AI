@@ -272,10 +272,32 @@ function DashboardGuard() {
               </div>
 
               <div className="card-info">
+                {scanIn.warning && (
+                  <div style={{
+                    padding: '10px 14px', borderRadius: '8px',
+                    background: '#fef2f2', border: '1px solid #f87171',
+                    color: '#dc2626', fontWeight: 600, fontSize: '13px',
+                    textAlign: 'center', marginBottom: '12px', animation: 'fadeInUp 0.3s ease'
+                  }}>
+                    ⚠️ Cổng vào: {scanIn.warning}
+                  </div>
+                )}
+
+                {scanOut.warning && (
+                  <div style={{
+                    padding: '10px 14px', borderRadius: '8px',
+                    background: '#fef2f2', border: '1px solid #f87171',
+                    color: '#dc2626', fontWeight: 600, fontSize: '13px',
+                    textAlign: 'center', marginBottom: '12px', animation: 'fadeInUp 0.3s ease'
+                  }}>
+                    ⚠️ Cổng ra: {scanOut.warning}
+                  </div>
+                )}
+
                 <div className="info-row">
                   <span>Trạng thái</span>
-                  <strong style={{ color: '#16a34a' }}>
-                    {scanIn.plate ? '🚗 Đã nhận diện' : '⏳ Chờ xe vào'}
+                  <strong style={{ color: scanIn.warning ? '#dc2626' : '#16a34a' }}>
+                    {scanIn.warning ? '⚠️ Lỗi' : (scanIn.plate ? '🚗 Đã nhận diện' : '⏳ Chờ xe vào')}
                   </strong>
                 </div>
 

@@ -1,6 +1,7 @@
 #include <ESP32Servo.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <ESPmDNS.h>
 
 // ===== DEBUG FLAG =====
 // Set DEBUG 0 khi chạy thực tế, 1 khi cần debug chi tiết
@@ -21,7 +22,7 @@
 // ===== CẤU HÌNH WI-FI & MQTT =====
 const char* ssid        = "Cun Cun";
 const char* password    = "12345689";
-const char* mqtt_server = "192.168.1.110";
+const char* mqtt_server = "smartparking.local";
 
 WiFiClient   espClient;
 PubSubClient client(espClient);
@@ -245,45 +246,62 @@ void handleSensors(float d1, float d2) {
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String msg = "";
   for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
-  DBG("[MQTT IN] "); DBG(topic); DBG(" -> "); DBGLN(msg);
+  LOG("[MQTT IN] Topic: "); LOG(topic); LOG(" | Payload: "); LOGLN(msg);
 
   if (String(topic) == "parking/commands/gate") {
-    if      (msg == "OPEN")  openBarrier();
-    else if (msg == "CLOSE") closeBarrier();
+    if (msg == "OPEN") {
+      LOGLN("[MQTT COMMAND] Nhan lenh MO cong!");
+      openBarrier();
+    }
+    else if (msg == "CLOSE") {
+      LOGLN("[MQTT COMMAND] Nhan lenh DONG cong!");
+      closeBarrier();
+    }
   }
 }
 
-// ===== MQTT RECONNECT (non-blocking, chỉ log khi mất/khôi phục) =====
+// ===== MQTT RECONNECT =====
 void mqttReconnect() {
   if (client.connected()) {
     if (!mqttWasConnected) {
-      // Vừa phục hồi kết nối
-      LOGLN("[MQTT] RESTORED.");
+      LOGLN("[MQTT] Da ket noi thanh cong!");
       mqttWasConnected = true;
       mqttLostPrinted  = false;
     }
     return;
   }
 
-  // Mất kết nối — chỉ in một lần
-  if (!mqttLostPrinted) {
-    LOGLN("[MQTT] LOST. Dang thu lai...");
-    mqttLostPrinted  = true;
-    mqttWasConnected = false;
-  }
-
   unsigned long now = millis();
   if (now - lastReconnectAttempt < 5000) return;
   lastReconnectAttempt = now;
 
-  String id = "ESP32-Gate-" + String(random(0xffff), HEX);
-  if (client.connect(id.c_str())) {
-    LOGLN("[MQTT] Connected.");
-    client.subscribe("parking/commands/gate");
-    mqttWasConnected = true;
-    mqttLostPrinted  = false;
+  LOGLN("[MQTT] Dang do tim IP cua may tinh 'smartparking' qua mDNS...");
+  IPAddress serverIP = MDNS.queryHost("smartparking");
+  
+  if (serverIP.toString() != "0.0.0.0") {
+    LOG("[MQTT] Da tim thay IP: "); LOGLN(serverIP.toString());
+    client.setServer(serverIP, 1883);
+
+    String id = "ESP32-Gate-" + String(random(0xffff), HEX);
+    LOGLN("[MQTT] Dang ket noi...");
+    if (client.connect(id.c_str())) {
+      LOGLN("[MQTT] Connected & Subscribed to parking/commands/gate");
+      client.subscribe("parking/commands/gate");
+      mqttWasConnected = true;
+      mqttLostPrinted  = false;
+    } else {
+      LOG("[MQTT] Ket noi that bai! Client state = "); LOG(client.state());
+      LOGLN(" (Cho 5s thu lai)");
+      mqttWasConnected = false;
+    }
+  } else {
+    LOGLN("[MQTT ERROR] Khong do tim thay may tinh nao co ten la 'smartparking' trong mang!");
+    LOGLN("=> HUONG DAN KAC PHUC:");
+    LOGLN("   1. Kiem tra xem ban da doi ten may tinh Windows thanh 'smartparking' chua (System -> About).");
+    LOGLN("   2. Kiem tra xem may tinh va ESP32 co dang ket noi chung 1 mang Wi-Fi hay khong.");
+    LOGLN("   3. Thu tat va bat lai ket noi Wi-Fi cua may tinh.");
+    mqttWasConnected = false;
   }
-  // Thất bại: không in gì thêm, chờ lần sau
 }
 
 // ===== SETUP =====
@@ -307,6 +325,11 @@ void setup() {
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
   LOG("\n[WIFI] IP: "); LOGLN(WiFi.localIP());
+
+  // Khởi tạo mDNS
+  if (MDNS.begin("esp32-gate")) {
+    LOGLN("[mDNS] Da khoi tao. Giai quyet ten mien: smartparking.local");
+  }
 
   // MQTT
   client.setServer(mqtt_server, 1883);

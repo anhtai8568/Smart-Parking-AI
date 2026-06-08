@@ -41,6 +41,10 @@ const vehicleSchema = new mongoose.Schema(
             type: Number,
             default: null,
         },
+        rfidCard: {
+            type: String,
+            default: null,
+        },
     },
     {
         timestamps: true,

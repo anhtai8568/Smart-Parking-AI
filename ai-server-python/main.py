@@ -41,8 +41,8 @@ last_plate_text = ""
 # ===== SCAN RESULT CACHE =====
 # Lưu kết quả nhận diện mới nhất của cổng vào và cổng ra
 last_scan = {
-    "in":  {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None},
-    "out": {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None},
+    "in":  {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None},
+    "out": {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None},
 }
 
 def generate_frames():
@@ -109,9 +109,9 @@ def generate_aruco(identifier: str, size: int = 400, label: bool = True):
         # Nếu không phải là số, coi identifier là biển số xe
         plate = identifier.strip()
         marker_id = get_aruco_id_from_license_plate(plate)
-        custom_label = f"BIEN SO: {plate.upper()} - AprilTag ID: {marker_id}"
+        custom_label = f"BIEN SO: {plate.upper()} - ID: {marker_id}"
 
-    # Tạo ảnh ArUco (nay là AprilTag)
+    # Tạo ảnh AprilTag
     img = generate_aruco_image(marker_id, size, include_label=label, custom_label=custom_label)
     
     # Mã hóa ảnh sang dạng PNG
@@ -205,11 +205,16 @@ async def capture_and_scan(gate: str = "in"):
     _, frame_buf = cv2.imencode(".jpg", frame)
     frame_b64 = "data:image/jpeg;base64," + base64.b64encode(frame_buf.tobytes()).decode()
 
+    warning_msg = None
+    if not plate_text:
+        warning_msg = "Không nhận diện được biển số xe!"
+
     result = {
         "plate":      plate_text,
         "apriltag":   apriltag_id,
         "image_b64":  plate_b64 or frame_b64,  # ưu tiên ảnh biển số, fallback frame full
         "timestamp":  time.strftime("%H:%M %d/%m/%Y"),
+        "warning":    warning_msg,
     }
     last_scan[gate] = result
 
@@ -230,6 +235,18 @@ async def get_latest_scan():
         "status": "success",
         "data":   last_scan,
     }
+
+
+@app.post("/api/update-scan-warning")
+async def update_scan_warning(payload: dict):
+    """
+    Cập nhật cảnh báo nhận diện/mismatch từ Node.js backend.
+    """
+    gate = payload.get("gate", "in")
+    warning = payload.get("warning", None)
+    if gate in last_scan:
+        last_scan[gate]["warning"] = warning
+    return {"status": "success", "message": "Cập nhật cảnh báo thành công"}
 
 
 # Lệnh chạy server

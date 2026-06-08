@@ -5,7 +5,7 @@ import hashlib
 def get_aruco_dict(dict_type: int = None):
     """
     Returns the OpenCV ArUco/AprilTag dictionary.
-    Defaults to DICT_APRILTAG_36h11 (ideal for high robustness, supports up to 587 IDs).
+    Defaults to DICT_APRILTAG_36h11 (supports up to 587 IDs: 0 to 586).
     """
     if dict_type is None:
         try:
@@ -24,6 +24,7 @@ def get_aruco_dict(dict_type: int = None):
 def get_aruco_id_from_license_plate(license_plate: str) -> int:
     """
     Deterministically hashes a license plate string to an AprilTag ID between 0 and 586.
+    Matches the Node.js backend hashing logic.
     """
     # Keep only alphanumeric characters and uppercase
     clean_plate = "".join(c for c in license_plate if c.isalnum()).upper()
@@ -79,7 +80,7 @@ def generate_aruco_image(marker_id: int, size: int = 400, include_label: bool = 
     
     # 3. Add text label
     if include_label:
-        text = custom_label if custom_label else f"ParkVision AI - AprilTag ID: {marker_id}"
+        text = custom_label if custom_label else f"AprilTag - ID: {marker_id}"
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.6
         color = (0, 0, 0)  # Black text
@@ -115,7 +116,7 @@ if __name__ == "__main__":
     
     if args.plate:
         marker_id = get_aruco_id_from_license_plate(args.plate)
-        custom_label = f"BIEN SO: {args.plate.upper()} - AprilTag ID: {marker_id}"
+        custom_label = f"BIEN SO: {args.plate.upper()} - ID: {marker_id}"
         print(f"Hashed license plate '{args.plate}' to AprilTag ID: {marker_id}")
         
     if marker_id < 0 or marker_id >= 587:
