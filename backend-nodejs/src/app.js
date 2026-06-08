@@ -7,6 +7,8 @@ import userRoutes from './routes/user.routes.js'
 import pricingRoutes from './routes/pricing.routes.js'
 import subscriptionRoutes from './routes/subscription.routes.js'
 import sepayRoutes from './routes/sepay.routes.js'
+import gateRoutes from './routes/gate.routes.js'
+import slotRoutes from './routes/slot.routes.js'
 
 const app = express()
 
@@ -44,5 +46,7 @@ app.use('/api/subscriptions', subscriptionRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/vehicles', vehicleRoutes)
 app.use('/api/parking-history', parkingRoutes)
+app.use('/api/gate', gateRoutes)
+app.use('/api/slots', slotRoutes)
 
 export default app

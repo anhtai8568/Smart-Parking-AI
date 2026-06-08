@@ -4,9 +4,16 @@ import ParkingSlot from '../../models/parkingslot.js';
 
 const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883';
 
+let mqttClient = null;
+
+export function getMQTTClient() {
+    return mqttClient;
+}
+
 export function connectMQTT() {
     console.log(`Connecting to MQTT Broker at ${MQTT_BROKER_URL}...`);
     const client = mqtt.connect(MQTT_BROKER_URL);
+    mqttClient = client;
 
     client.on('connect', () => {
         console.log('✅ Connected to MQTT Broker successfully!');

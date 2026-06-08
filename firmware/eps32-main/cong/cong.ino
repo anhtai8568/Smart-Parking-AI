@@ -3,384 +3,318 @@
 #include <PubSubClient.h>
 
 // ===== CẤU HÌNH WI-FI & MQTT =====
-const char* ssid = "Cun Cun";             // <--- Thay bằng tên Wi-Fi của bạn
-const char* password = "12345689";     // <--- Thay bằng mật khẩu Wi-Fi của bạn
-const char* mqtt_server = "192.168.1.110"; // <--- Thay bằng IP máy tính chạy Docker (Ví dụ: 192.168.1.15)
+const char* ssid        = "Cun Cun";
+const char* password    = "12345689";
+const char* mqtt_server = "192.168.1.110"; // IP máy chạy Docker
 
-WiFiClient espClient;
+WiFiClient   espClient;
 PubSubClient client(espClient);
 
-// ===== SENSOR =====
-#define TRIG1 19
-#define ECHO1 18
-
-#define TRIG2 5
-#define ECHO2 4
-
-// ===== SERVO =====
+// ===== CHÂN PHẦN CỨNG =====
+#define TRIG1     19
+#define ECHO1     18
+#define TRIG2      5
+#define ECHO2      4
 #define SERVO_PIN 21
+
 Servo myServo;
 
-int currentAngle = 0;
+// ===== UART =====
+HardwareSerial SerialMega(2); // UART2 – Mega  (RX16, TX17)
+HardwareSerial SerialUno(1);  // UART1 – Uno   (RX26, TX27)
 
-// ===== UART với Mega =====
-HardwareSerial SerialMega(2); // UART2
-int soChoTrong = -1;
+// ===== TRẠNG THÁI HỆ THỐNG =====
+int  soChoTrong      = -1;
+bool slotStatus[6]   = {true, true, true, true, true, true}; // khởi = true → lần đầu nhận Mega sẽ detect thay đổi
 
-// ===== UART với Uno =====
-HardwareSerial SerialUno(1); // UART1
+bool xeDangVao       = false;  // Sensor 1 đang thấy xe (cổng vào)
+bool xeDangRa        = false;  // Sensor 2 đang thấy xe (cổng ra)
+bool enableScanID    = false;  // Cho phép nhận thẻ RFID
 
-// ===== Trạng thái kết nối UART =====
+String rfidUid       = "";     // UID thẻ vãng lai đã lưu tạm
+
+bool dangChoXeVao    = false;  // Đang chờ xe đi qua hẳn sau khi mở (vào)
+bool dangChoXeRa     = false;  // Đang chờ xe đi qua hẳn sau khi mở (ra)
+bool xeDaVaoTrong    = false;
+bool xeDaRaNgoai     = false;
+
+// ===== DEBOUNCE CẢM BIẾN =====
+// Chỉ tắt enableScanID sau khi mất tín hiệu liên tục >= DEBOUNCE_MS
+const unsigned long DEBOUNCE_MS = 2000;
+unsigned long lastSeenD1        = 0;
+unsigned long lastSeenD2        = 0;
+
+// ===== TIMER =====
+unsigned long lastUartCheck     = 0;
+const unsigned long UART_CHECK_INTERVAL = 3000;
 bool receivedMega = false;
-bool receivedUno = false;
-unsigned long lastConnectionCheck = 0;
-const unsigned long checkInterval = 3000; // Cảnh báo định kỳ mỗi 3 giây
+bool receivedUno  = false;
 
-// Mảng lưu trạng thái chi tiết của 6 chỗ đỗ (false = trống, true = có xe)
-bool slotStatus[6] = {false, false, false, false, false, false}; 
+unsigned long lastReconnectAttempt = 0;
 
-// ===== STATE =====
-bool xeDangChoQuetThe = false;
-bool xeDangRa = false;
-String rfidUid = "";           // Biến tạm lưu UID thẻ xe vãng lai
-bool dangChoXeVao = false;     // Chờ xe đi qua cảm biến trong
-bool xeDaVaoTrong = false;     // Xác nhận xe đã chạm cảm biến trong (d2 < 10)
-bool dangChoXeRa = false;      // Chờ xe đi qua cảm biến ngoài
-bool xeDaRaNgoai = false;      // Xác nhận xe đã chạm cảm biến ngoài (d1 < 10)
-bool enableScanID = false;     // Cho phép quét thẻ để điều khiển barrier (mặc định tắt)
-
-// ===== Đo khoảng cách =====
-float getDistance(int trigPin, int echoPin) {
-  long duration;
-
-  digitalWrite(trigPin, LOW);
+// ===== KHOẢNG CÁCH =====
+// Timeout 8ms (≈136cm) – ngắn đủ để MQTT loop() chạy kịp
+float getDistance(int trig, int echo) {
+  digitalWrite(trig, LOW);
   delayMicroseconds(2);
-  digitalWrite(trigPin, HIGH);
+  digitalWrite(trig, HIGH);
   delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
-
-  duration = pulseIn(echoPin, HIGH, 30000);
-  if (duration == 0) return -1;
-
-  return duration * 0.034 / 2;
+  digitalWrite(trig, LOW);
+  long d = pulseIn(echo, HIGH, 8000);
+  return (d == 0) ? -1.0f : d * 0.034f / 2.0f;
 }
 
-// Hàm kích hoạt servo mở cửa
-void moraochan() {
-  Serial.println("Mo barrier!");
+// ===== MỞ / ĐÓNG BARRIER =====
+void openBarrier() {
+  Serial.println("[BARRIER] Mo!");
   myServo.write(90);
-  currentAngle = 90;
 }
 
-// Hàm kết nối Wi-Fi
-void setup_wifi() {
-  delay(10);
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-
-  WiFi.begin(ssid, password);
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+void closeBarrier() {
+  Serial.println("[BARRIER] Dong!");
+  myServo.write(0);
 }
 
-// Hàm xử lý khi nhận lệnh từ MQTT Broker
-void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  String message = "";
-  for (int i = 0; i < length; i++) {
-    message += (char)payload[i];
+// ===== XỬ LÝ THẺ RFID =====
+// Gọi mỗi khi nhận được gói "CARD:<id>" từ Uno
+void handleRFID(const String& cardID) {
+  if (!enableScanID) {
+    // Chế độ đăng ký thẻ thô (không liên quan đến cổng)
+    Serial.print("[RFID RAW] ");
+    Serial.println(cardID);
+    return;
   }
-  Serial.println(message);
 
-  // Nếu nhận được lệnh mở cửa từ xa từ cổng Web
-  if (String(topic) == "parking/commands/gate") {
-    if (message == "OPEN") {
-      moraochan();
-    }
-  }
-}
-
-// Hàm kết nối lại với MQTT Broker
-void reconnect() {
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Thử kết nối với ID ngẫu nhiên
-    String clientId = "ESP32Client-" + String(random(0xffff), HEX);
-    if (client.connect(clientId.c_str())) {
-      Serial.println("connected");
-      // Subscribe lại chủ đề nhận lệnh mở cổng
-      client.subscribe("parking/commands/gate");
+  if (xeDangVao) {
+    // ---- CỔNG VÀO ----
+    Serial.print("[RFID VAO] ID: "); Serial.println(cardID);
+    if (soChoTrong > 0) {
+      rfidUid = cardID;
+      openBarrier();
+      dangChoXeVao  = true;
+      xeDaVaoTrong  = false;
+      enableScanID  = false;
+      client.publish("parking/events/gate/in", cardID.c_str());
+      Serial.println("[RFID VAO] Luu UID, mo cong.");
     } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      delay(5000);
+      Serial.println("[RFID VAO] Het cho! Khong mo cong.");
+    }
+
+  } else if (xeDangRa) {
+    // ---- CỔNG RA ----
+    Serial.print("[RFID RA] ID: "); Serial.println(cardID);
+    if (cardID == rfidUid) {
+      Serial.println("[RFID RA] The khop. Mo cong.");
+      openBarrier();
+      dangChoXeRa  = true;
+      xeDaRaNgoai  = false;
+      rfidUid      = "";
+      enableScanID = false;
+      client.publish("parking/events/gate/out", cardID.c_str());
+    } else {
+      Serial.print("[RFID RA] The KHONG khop! Nhan: ");
+      Serial.print(cardID);
+      Serial.print(" | Luu: ");
+      Serial.println(rfidUid);
     }
   }
 }
 
+// ===== XỬ LÝ DỮ LIỆU TỪ MEGA (CHỖ ĐỖ XE) =====
+void handleMegaData(const String& data) {
+  // Lấy số chỗ trống
+  int idx = data.indexOf("EMPTY:");
+  if (idx != -1) soChoTrong = data.substring(idx + 6).toInt();
 
+  // Cập nhật từng slot, publish khi có thay đổi
+  for (int i = 0; i < 6; i++) {
+    String key = "S" + String(i + 1) + ": CO XE";
+    bool hasCar = (data.indexOf(key) != -1);
+    if (hasCar != slotStatus[i]) {
+      String payload = "S" + String(i + 1) + (hasCar ? ": CO XE" : ": TRONG");
+      client.publish("parking/events/slots", payload.c_str());
+      Serial.print("[SLOT] "); Serial.println(payload);
+    }
+    slotStatus[i] = hasCar;
+  }
+
+  // Log nhanh
+  Serial.print("[SLOT TONG] Trong:");
+  Serial.print(soChoTrong);
+  Serial.print(" |");
+  for (int i = 0; i < 6; i++) {
+    Serial.print(" S"); Serial.print(i+1);
+    Serial.print(slotStatus[i] ? "=FULL" : "=OK ");
+  }
+  Serial.println();
+}
+
+// ===== XỬ LÝ CẢM BIẾN + LOGIC CỔNG =====
+// Tất cả logic phát hiện xe và tự động đóng barrier
+void handleSensors(float d1, float d2) {
+  unsigned long now = millis();
+
+  // -- CỔNG VÀO (sensor 1) --
+  if (d1 > 0 && d1 < 10) {
+    lastSeenD1 = now;
+    if (!xeDangVao) {
+      Serial.println("[SENSOR1] Xe den cong vao, cho quet the...");
+      xeDangVao   = true;
+      enableScanID = true;
+    }
+  } else if (xeDangVao && (now - lastSeenD1 >= DEBOUNCE_MS)) {
+    Serial.println("[SENSOR1] Xe da roi (debounce het).");
+    xeDangVao   = false;
+    enableScanID = false;
+  }
+
+  // -- CỔNG RA (sensor 2) --
+  if (d2 > 0 && d2 < 10) {
+    lastSeenD2 = now;
+    if (!xeDangRa) {
+      Serial.println("[SENSOR2] Xe den cong ra, cho quet the...");
+      xeDangRa    = true;
+      enableScanID = true;
+    }
+  } else if (xeDangRa && (now - lastSeenD2 >= DEBOUNCE_MS)) {
+    Serial.println("[SENSOR2] Xe da roi (debounce het).");
+    xeDangRa    = false;
+    enableScanID = false;
+  }
+
+  // -- TỰ ĐÓNG BARRIER SAU KHI XE ĐI QUA (cổng vào) --
+  if (dangChoXeVao) {
+    if (d2 > 0 && d2 < 10) xeDaVaoTrong = true;
+    if (xeDaVaoTrong && (d2 > 15 || d2 == -1)) {
+      static unsigned long t = 0;
+      if (t == 0) t = now;
+      if (now - t >= 1000) {
+        closeBarrier();
+        xeDaVaoTrong = false;
+        dangChoXeVao = false;
+        t = 0;
+        Serial.println("[BARRIER] Tu dong dong (xe da vao).");
+      }
+    }
+  }
+
+  // -- TỰ ĐÓNG BARRIER SAU KHI XE ĐI QUA (cổng ra) --
+  if (dangChoXeRa) {
+    if (d1 > 0 && d1 < 10) xeDaRaNgoai = true;
+    if (xeDaRaNgoai && (d1 > 15 || d1 == -1)) {
+      static unsigned long t = 0;
+      if (t == 0) t = now;
+      if (now - t >= 1000) {
+        closeBarrier();
+        xeDaRaNgoai = false;
+        dangChoXeRa = false;
+        t = 0;
+        Serial.println("[BARRIER] Tu dong dong (xe da ra).");
+      }
+    }
+  }
+}
+
+// ===== MQTT CALLBACK =====
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String msg = "";
+  for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
+  Serial.print("[MQTT IN] "); Serial.print(topic); Serial.print(" -> "); Serial.println(msg);
+
+  if (String(topic) == "parking/commands/gate") {
+    if      (msg == "OPEN")  openBarrier();
+    else if (msg == "CLOSE") closeBarrier();
+  }
+}
+
+// ===== MQTT RECONNECT (non-blocking) =====
+void mqttReconnect() {
+  if (client.connected()) return;
+  unsigned long now = millis();
+  if (now - lastReconnectAttempt < 5000) return;
+  lastReconnectAttempt = now;
+
+  Serial.print("[MQTT] Reconnecting...");
+  String id = "ESP32-Gate-" + String(random(0xffff), HEX);
+  if (client.connect(id.c_str())) {
+    Serial.println(" OK");
+    client.subscribe("parking/commands/gate");
+  } else {
+    Serial.print(" FAIL rc="); Serial.println(client.state());
+  }
+}
+
+// ===== SETUP =====
 void setup() {
   Serial.begin(115200);
 
-  // Khởi động UART2 kết nối thẳng với Mega
   SerialMega.begin(9600, SERIAL_8N1, 16, 17);
-  SerialMega.setTimeout(50); 
+  SerialMega.setTimeout(50);
 
-  // Khởi động UART1 kết nối với Uno
-  SerialUno.begin(9600, SERIAL_8N1, 26, 27); // RX=26, TX=27
+  SerialUno.begin(9600, SERIAL_8N1, 26, 27);
   SerialUno.setTimeout(50);
 
-  // Sensor
-  pinMode(TRIG1, OUTPUT);
-  pinMode(ECHO1, INPUT);
+  pinMode(TRIG1, OUTPUT); pinMode(ECHO1, INPUT);
+  pinMode(TRIG2, OUTPUT); pinMode(ECHO2, INPUT);
 
-  pinMode(TRIG2, OUTPUT);
-  pinMode(ECHO2, INPUT);
-
-  // Servo
   myServo.attach(SERVO_PIN);
   myServo.write(0);
 
-  // Kết nối Wi-Fi
-  setup_wifi();
-  
-  // Cài đặt thông số MQTT Server
-  client.setServer(mqtt_server, 1883);
-  client.setCallback(callback);
+  // Wi-Fi
+  Serial.print("[WIFI] Connecting to "); Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  Serial.print("\n[WIFI] Connected. IP: "); Serial.println(WiFi.localIP());
 
-  Serial.println("ESP32 Gate System Ready...");
+  // MQTT
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(mqttCallback);
+  client.setKeepAlive(60);
+
+  Serial.println("[SYS] ESP32 Gate Ready.");
 }
 
+// ===== LOOP =====
 void loop() {
-  // Duy trì kết nối Wi-Fi & MQTT
-  if (!client.connected()) {
-    reconnect();
-  }
+  // 1. Duy trì MQTT
+  mqttReconnect();
   client.loop();
 
-  // ===== KIỂM TRA TRẠNG THÁI KẾT NỐI UART (ĐỊNH KỲ) =====
-  if (millis() - lastConnectionCheck >= checkInterval) {
-    lastConnectionCheck = millis();
-    if (!receivedMega) {
-      Serial.println("[UART STATUS] CHUA nhan duoc tin hieu tu ARDUINO MEGA! (Kiem tra day TX Mega -> RX16 ESP32)");
-    }
-    if (!receivedUno) {
-      Serial.println("[UART STATUS] CHUA nhan duoc tin hieu tu ARDUINO UNO! (Kiem tra day TX Uno -> RX26 ESP32, hoac quet the thu)");
-    }
+  // 2. Cảnh báo UART (định kỳ)
+  unsigned long now = millis();
+  if (now - lastUartCheck >= UART_CHECK_INTERVAL) {
+    lastUartCheck = now;
+    if (!receivedMega) Serial.println("[WARN] Chua nhan Mega UART!");
+    if (!receivedUno)  Serial.println("[WARN] Chua nhan Uno UART!");
   }
 
-  // ===== 1. NHẬN VÀ BÓC TÁCH DỮ LIỆU TỪ MEGA =====
+  // 3. Đọc Mega → trạng thái chỗ đỗ xe
   if (SerialMega.available()) {
     String data = SerialMega.readStringUntil('\n');
     data.trim();
-
-    // In luôn mọi dữ liệu nhận được từ Mega để kiểm tra thông số
-    Serial.print("[MEGA UART] -> ");
-    Serial.println(data);
-
-    if (!receivedMega) {
-      Serial.println("[UART STATUS] -> DA NHAN DUOC TIN HIEU TU ARDUINO MEGA LAN DAU!");
-      receivedMega = true;
-    }
-
-    // 1.1 Tách tổng số chỗ trống
-    int idx = data.indexOf("EMPTY:");
-    if (idx != -1) {
-      soChoTrong = data.substring(idx + 6).toInt();
-    }
-
-    // 1.2 Tách trạng thái chi tiết của từng chỗ đỗ và báo ô trống khi xe đỗ vào
-    for (int i = 0; i < 6; i++) {
-      String matchStr = "S" + String(i + 1) + ": CO XE"; 
-      bool currentSlotHasCar = (data.indexOf(matchStr) != -1);
-      
-      // Nếu ô đỗ trước đó TRỐNG (false) mà bây giờ CÓ XE (true) thì báo
-      if (currentSlotHasCar && !slotStatus[i]) {
-        Serial.print("Xe da vao o do: S");
-        Serial.println(i + 1);
-        
-        // Publish lên MQTT
-        String payload = "S" + String(i + 1) + ": CO XE";
-        client.publish("parking/events/slots", payload.c_str());
-      }
-      // Nếu ô đỗ trước đó CÓ XE (true) mà bây giờ TRỐNG (false) thì báo xe ra
-      else if (!currentSlotHasCar && slotStatus[i]) {
-        Serial.print("Xe da roi khoi o do: S");
-        Serial.println(i + 1);
-        
-        // Publish lên MQTT
-        String payload = "S" + String(i + 1) + ": TRONG";
-        client.publish("parking/events/slots", payload.c_str());
-      }
-      slotStatus[i] = currentSlotHasCar;
-    }
-
-    // [IN RA ĐỂ TEST] - Hiển thị lên màn hình xem ESP32 đã tách đúng chưa
-    Serial.print("Thong ke nhanh -> Trong: ");
-    Serial.print(soChoTrong);
-    Serial.print(" | Chi tiet: ");
-    for(int i = 0; i < 6; i++){
-      Serial.print("S"); 
-      Serial.print(i + 1); 
-      Serial.print(slotStatus[i] ? "=(FULL) " : "=(TRONG) ");
-    }
-    Serial.println();
+    Serial.print("[MEGA] "); Serial.println(data);
+    if (!receivedMega) { receivedMega = true; Serial.println("[UART] Mega OK!"); }
+    handleMegaData(data);
   }
 
-  // ===== 1.5 NHẬN VÀ BÓC TÁCH DỮ LIỆU TỪ UNO (RFID DÙNG CHUNG) =====
+  // 4. Đọc Uno → RFID
   if (SerialUno.available()) {
     String data = SerialUno.readStringUntil('\n');
     data.trim();
-
-    // In luôn mọi dữ liệu nhận được từ Uno để kiểm tra thông số
-    Serial.print("[UNO UART] -> ");
-    Serial.println(data);
-
-    if (!receivedUno) {
-      Serial.println("[UART STATUS] -> DA NHAN DUOC TIN HIEU TU ARDUINO UNO LAN DAU!");
-      receivedUno = true;
-    }
-
+    Serial.print("[UNO] "); Serial.println(data);
+    if (!receivedUno) { receivedUno = true; Serial.println("[UART] Uno OK!"); }
     if (data.startsWith("CARD:")) {
-      String cardID = data.substring(5); // Tách mã thẻ sau tiền tố "CARD:"
-      
-      if (enableScanID) {
-        // TRƯỜNG HỢP 1: Xe đang đợi ở cổng VÀO (Siêu âm 1 phát hiện)
-        if (xeDangChoQuetThe) {
-          Serial.print("QUET THE CONG VAO (RFID CHUNG) - ID: ");
-          Serial.println(cardID);
-
-          if (soChoTrong > 0) {
-            rfidUid = cardID; // Lưu thẻ vãng lai
-            Serial.print("Da luu rfidUid tam: ");
-            Serial.println(rfidUid);
-            moraochan(); // Mở barrier
-            dangChoXeVao = true;
-            xeDaVaoTrong = false;
-            enableScanID = false; 
-            
-            // Publish sự kiện thẻ vào lên MQTT
-            client.publish("parking/events/gate/in", cardID.c_str());
-          } else {
-            Serial.println("Het cho! Khong the mo barrier.");
-          }
-        } 
-        // TRƯỜNG HỢP 2: Xe đang đợi ở cổng RA (Siêu âm 2 phát hiện)
-        else if (xeDangRa) {
-          Serial.print("QUET THE CONG RA (RFID CHUNG) - ID: ");
-          Serial.println(cardID);
-
-          if (cardID == rfidUid) {
-            Serial.println("THE KHOP. Mo barrier!");
-            moraochan(); // Mở barrier
-            dangChoXeRa = true;
-            xeDaRaNgoai = false;
-            rfidUid = ""; // Xóa bộ nhớ tạm thẻ ra
-            enableScanID = false; 
-            
-            // Publish sự kiện thẻ ra lên MQTT
-            client.publish("parking/events/gate/out", cardID.c_str());
-          } else {
-            Serial.print("THE KHONG KHOP! (The ra: ");
-            Serial.print(cardID);
-            Serial.print(" | The da luu: ");
-            Serial.print(rfidUid);
-            Serial.println(")");
-          }
-        }
-      } else {
-        // Chế độ quẹt thẻ thô đăng ký thẻ tháng (không mở cổng)
-        Serial.print("RFID_SCAN_RAW: ");
-        Serial.println(cardID);
-      }
+      handleRFID(data.substring(5));
     }
   }
 
-  // ===== 2. ĐỌC CẢM BIẾN SIÊU ÂM =====
+  // 5. Đọc cảm biến + xử lý cổng
   float d1 = getDistance(TRIG1, ECHO1);
+  client.loop(); // giữ MQTT alive trong khoảng pulseIn
   float d2 = getDistance(TRIG2, ECHO2);
+  client.loop();
 
-  // ===== 3. LOGIC XE VÀO (CẢM BIẾN 1) =====
-  if (d1 > 0 && d1 < 10) {
-    if (!xeDangChoQuetThe) {
-      Serial.println("Xe den, vui long quet the...");
-      xeDangChoQuetThe = true;
-      enableScanID = true; // Kích hoạt quét thẻ
-    }
-  } 
-  else if (d1 > 15 || d1 == -1) {
-    if (xeDangChoQuetThe) {
-      xeDangChoQuetThe = false; 
-      enableScanID = false; // Hủy kích hoạt nếu xe lùi đi mất
-    }
-  }
+  handleSensors(d1, d2);
 
-  // ===== 4. CHO XE VAO: DOI RFID TU UNO GUI SANG =====
-  if (xeDangChoQuetThe && soChoTrong == 0) {
-    static unsigned long lastBaoHetCho = 0;
-    if (millis() - lastBaoHetCho > 3000) {
-      Serial.println("Het cho! Khong the vao.");
-      lastBaoHetCho = millis();
-    }
-  }
-
-  // ===== 5. LOGIC XE RA (CẢM BIẾN 2) =====
-  if (d2 > 0 && d2 < 10) {
-    if (!xeDangRa) {
-      Serial.println("Xe ra cong, vui long quet the...");
-      xeDangRa = true;
-      enableScanID = true; // Kích hoạt quét thẻ
-    }
-  } 
-  else if (d2 > 15 || d2 == -1) {
-    if (xeDangRa) {
-      xeDangRa = false;
-      enableScanID = false; // Hủy kích hoạt nếu xe lùi đi mất
-    }
-  }
-
-  // ===== 6. ĐÓNG BARRIER AN TOÀN =====
-  // Logic xe vào: đóng cửa khi xe đi qua hẳn cảm biến bên trong (TRIG2/ECHO2)
-  if (dangChoXeVao) {
-    if (d2 > 0 && d2 < 10) {
-      xeDaVaoTrong = true; // Xe bắt đầu đi qua cảm biến trong
-    }
-    if (xeDaVaoTrong && (d2 > 15 || d2 == -1)) {
-      delay(1000); // Chờ đuôi xe qua hẳn
-      myServo.write(0);
-      currentAngle = 0;
-      xeDaVaoTrong = false;
-      dangChoXeVao = false;
-      Serial.println("Dong cong (Xe da vao)!");
-    }
-  }
-
-  // Logic xe ra: đóng cửa khi xe đi qua hẳn cảm biến bên ngoài (TRIG1/ECHO1)
-  if (dangChoXeRa) {
-    if (d1 > 0 && d1 < 10) {
-      xeDaRaNgoai = true; // Xe bắt đầu đi qua cảm biến ngoài
-    }
-    if (xeDaRaNgoai && (d1 > 15 || d1 == -1)) {
-      delay(1000); // Chờ đuôi xe qua hẳn
-      myServo.write(0);
-      currentAngle = 0;
-      xeDaRaNgoai = false;
-      dangChoXeRa = false;
-      Serial.println("Dong cong (Xe da ra)!");
-    }
-  }
-
-  delay(50);
+  delay(5);
 }

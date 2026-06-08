@@ -1,11 +1,5 @@
-const MOCK_SLOTS = [
-  { code: 'S1', status: 'available', lastOccupiedAt: null },
-  { code: 'S2', status: 'occupied',  lastOccupiedAt: '2026-06-07T05:34:00Z' },
-  { code: 'S3', status: 'available', lastOccupiedAt: null },
-  { code: 'S4', status: 'occupied',  lastOccupiedAt: '2026-06-07T03:15:00Z' },
-  { code: 'S5', status: 'available', lastOccupiedAt: null },
-  { code: 'S6', status: 'maintenance', lastOccupiedAt: null },
-]
+import { useState, useEffect, useCallback } from 'react'
+import api from '../../services/api'
 
 const STATUS = {
   available:   { label: 'Trống',    bg: '#f0fdf4', border: '#86efac', color: '#15803d', dot: '#22c55e' },
@@ -28,25 +22,117 @@ function CarIcon({ color }) {
 }
 
 function ParkingSlotGrid() {
-  const slots = MOCK_SLOTS
+  const [slots, setSlots]           = useState([])
+  const [loading, setLoading]       = useState(true)
+  const [resetting, setResetting]   = useState(false)
+  const [lastUpdated, setLastUpdated] = useState(null)
+  const [error, setError]           = useState(null)
+
+  const fetchSlots = useCallback(async () => {
+    try {
+      const res = await api.get('/api/slots')
+      setSlots(res.data.data || [])
+      setLastUpdated(new Date())
+      setError(null)
+    } catch (err) {
+      setError('Không thể lấy dữ liệu chỗ đỗ xe')
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // Lần đầu load + polling mỗi 3 giây (realtime từ cảm biến Mega → MQTT → DB)
+  useEffect(() => {
+    fetchSlots()
+    const interval = setInterval(fetchSlots, 3000)
+    return () => clearInterval(interval)
+  }, [fetchSlots])
+
+  const handleReset = async () => {
+    if (!confirm('Reset tất cả chỗ đỗ về trạng thái trống?')) return
+    setResetting(true)
+    try {
+      await api.post('/api/slots/reset')
+      await fetchSlots()
+    } catch (err) {
+      alert('Lỗi reset: ' + err.message)
+    } finally {
+      setResetting(false)
+    }
+  }
+
   const available = slots.filter(s => s.status === 'available').length
-  const total = slots.filter(s => s.status !== 'maintenance').length
+  const occupied  = slots.filter(s => s.status === 'occupied').length
+  const total     = slots.filter(s => s.status !== 'maintenance').length
+
+  if (loading) {
+    return (
+      <div style={{ padding: '24px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>
+        <div style={{ display: 'inline-block', width: '20px', height: '20px', border: '2px solid #e2e8f0', borderTopColor: '#3b82f6', borderRadius: '50%', animation: 'spin 0.7s linear infinite', marginRight: '8px' }} />
+        Đang tải dữ liệu chỗ đỗ xe...
+      </div>
+    )
+  }
 
   return (
     <div style={{ marginTop: '12px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-        <h3 className="card-title" style={{ margin: 0 }}>Chỗ đỗ xe ô tô</h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#15803d', fontWeight: '700', background: '#f0fdf4', border: '1px solid #86efac', padding: '4px 12px', borderRadius: '20px' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <h3 className="card-title" style={{ margin: 0 }}>Chỗ đỗ xe ô tô</h3>
+          {/* Chấm xanh nhấp nháy – realtime indicator */}
+          <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: '#16a34a', fontWeight: 700 }}>
+            <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#22c55e', display: 'inline-block', animation: 'pulse 2s infinite' }} />
+            Live
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          {/* Badge trống */}
+          <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#15803d', fontWeight: 700, background: '#f0fdf4', border: '1px solid #86efac', padding: '4px 12px', borderRadius: '20px' }}>
             <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />
             {available}/{total} trống
           </span>
+
+          {/* Badge có xe */}
+          {occupied > 0 && (
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#b91c1c', fontWeight: 700, background: '#fef2f2', border: '1px solid #fca5a5', padding: '4px 12px', borderRadius: '20px' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444', display: 'inline-block' }} />
+              {occupied} đang đỗ
+            </span>
+          )}
+
+          {/* Nút reset */}
+          <button
+            id="btn-reset-slots"
+            onClick={handleReset}
+            disabled={resetting}
+            title="Reset toàn bộ chỗ đỗ về trạng thái trống (dùng khi cảm biến bị lỗi)"
+            style={{
+              display: 'flex', alignItems: 'center', gap: '5px',
+              padding: '4px 10px', borderRadius: '8px', border: '1px solid #fde68a',
+              background: '#fffbeb', color: '#92400e', fontWeight: 700, fontSize: '12px',
+              cursor: resetting ? 'not-allowed' : 'pointer', opacity: resetting ? 0.6 : 1,
+              transition: '0.15s ease',
+            }}
+          >
+            {resetting ? '⏳' : '🔄'} Reset
+          </button>
         </div>
       </div>
 
+      {/* Error banner */}
+      {error && (
+        <div style={{ padding: '8px 14px', borderRadius: '10px', background: '#fef2f2', border: '1px solid #fca5a5', color: '#b91c1c', fontSize: '13px', fontWeight: 600, marginBottom: '12px' }}>
+          ⚠️ {error}
+        </div>
+      )}
+
+      {/* Grid slots */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
         {slots.map(slot => {
-          const st = STATUS[slot.status] || STATUS.available
+          const st   = STATUS[slot.status] || STATUS.available
           const time = fmtTime(slot.lastOccupiedAt)
           return (
             <div
@@ -63,13 +149,13 @@ function ParkingSlotGrid() {
                 transition: 'box-shadow 0.2s',
               }}
             >
-              <div style={{ fontSize: '13px', fontWeight: '800', color: st.color, letterSpacing: '1px', textTransform: 'uppercase' }}>
+              <div style={{ fontSize: '13px', fontWeight: 800, color: st.color, letterSpacing: '1px', textTransform: 'uppercase' }}>
                 {slot.code}
               </div>
               <CarIcon color={slot.status === 'occupied' ? st.color : '#cbd5e1'} />
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: st.dot, display: 'inline-block', flexShrink: 0 }} />
-                <span style={{ fontSize: '12px', fontWeight: '700', color: st.color }}>{st.label}</span>
+                <span style={{ fontSize: '12px', fontWeight: 700, color: st.color }}>{st.label}</span>
               </div>
               {time && (
                 <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '-4px' }}>{time}</div>
@@ -78,6 +164,13 @@ function ParkingSlotGrid() {
           )
         })}
       </div>
+
+      {/* Thời gian cập nhật lần cuối */}
+      {lastUpdated && (
+        <div style={{ marginTop: '10px', fontSize: '11px', color: '#94a3b8', textAlign: 'right' }}>
+          Cập nhật lúc {lastUpdated.toLocaleTimeString('vi-VN')} · Tự động làm mới mỗi 3s
+        </div>
+      )}
     </div>
   )
 }
