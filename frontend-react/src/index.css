@@ -188,7 +188,7 @@ button {
 }
 
 .page-content {
-  padding: 26px;
+  padding: 12px 20px;
 }
 
 .page-title {
@@ -295,7 +295,7 @@ button {
 }
 
 .lane-split.single-gate .frame-vehicle {
-  height: 324px;
+  height: 220px;
 }
 
 .lane-split.single-gate .lane-exit-plates .plate-block {
@@ -431,7 +431,7 @@ button {
 }
 
 .frame-vehicle {
-  height: 260px;
+  height: 180px;
 }
 
 .frame-plate {
@@ -1075,7 +1075,7 @@ table tbody tr:hover {
   }
 
   .lane-split.single-gate .frame-vehicle {
-    height: 260px;
+    height: 180px;
   }
 
   .lane-split.single-gate .lane-exit-plates .plate-block {

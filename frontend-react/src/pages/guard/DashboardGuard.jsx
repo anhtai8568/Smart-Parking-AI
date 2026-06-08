@@ -34,6 +34,9 @@ function DashboardGuard() {
   const [scanIn,  setScanIn]  = useState(EMPTY_SCAN)
   const [scanOut, setScanOut] = useState(EMPTY_SCAN)
 
+  // ── Zoom Image Modal State ──
+  const [zoomImage, setZoomImage] = useState(null)
+
   // ── Alert: không nhận diện được biển số ──
   // gate = 'in' | 'out' | null
   const [noPlateAlert, setNoPlateAlert] = useState(null)
@@ -175,7 +178,15 @@ function DashboardGuard() {
         />
 
         {/* Ảnh chụp lúc sensor kích hoạt */}
-        <div className={`plate-wrap ${cls}`} style={{ position: 'relative', overflow: 'hidden' }}>
+        <div 
+          className={`plate-wrap ${cls}`} 
+          style={{ position: 'relative', overflow: 'hidden', cursor: 'pointer' }}
+          onClick={() => {
+            const currentImgSrc = scan.image_b64 || `${AI_URL}/api/video-stream`;
+            setZoomImage(currentImgSrc);
+          }}
+          title="Click để phóng to hình ảnh"
+        >
           <div className="plate-label accent">{label}</div>
           {scan.image_b64 ? (
             <img
@@ -274,10 +285,10 @@ function DashboardGuard() {
               <div className="card-info">
                 {scanIn.warning && (
                   <div style={{
-                    padding: '10px 14px', borderRadius: '8px',
+                    padding: '6px 10px', borderRadius: '8px',
                     background: '#fef2f2', border: '1px solid #f87171',
-                    color: '#dc2626', fontWeight: 600, fontSize: '13px',
-                    textAlign: 'center', marginBottom: '12px', animation: 'fadeInUp 0.3s ease'
+                    color: '#dc2626', fontWeight: 600, fontSize: '12px',
+                    textAlign: 'center', marginBottom: '8px', animation: 'fadeInUp 0.3s ease'
                   }}>
                     ⚠️ Cổng vào: {scanIn.warning}
                   </div>
@@ -285,10 +296,10 @@ function DashboardGuard() {
 
                 {scanOut.warning && (
                   <div style={{
-                    padding: '10px 14px', borderRadius: '8px',
+                    padding: '6px 10px', borderRadius: '8px',
                     background: '#fef2f2', border: '1px solid #f87171',
-                    color: '#dc2626', fontWeight: 600, fontSize: '13px',
-                    textAlign: 'center', marginBottom: '12px', animation: 'fadeInUp 0.3s ease'
+                    color: '#dc2626', fontWeight: 600, fontSize: '12px',
+                    textAlign: 'center', marginBottom: '8px', animation: 'fadeInUp 0.3s ease'
                   }}>
                     ⚠️ Cổng ra: {scanOut.warning}
                   </div>
@@ -368,6 +379,42 @@ function DashboardGuard() {
       <div className="card" style={{ marginTop: '24px' }}>
         <ParkingSlotGrid />
       </div>
+
+      {/* Zoom Image Modal */}
+      {zoomImage && (
+        <div 
+          onClick={() => setZoomImage(null)}
+          style={{
+            position: 'fixed',
+            top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.9)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            cursor: 'zoom-out',
+            animation: 'fadeInUp 0.2s ease-out'
+          }}
+        >
+          <img 
+            src={zoomImage} 
+            alt="Phóng to hình ảnh" 
+            style={{ 
+              maxWidth: '90%', 
+              maxHeight: '90%', 
+              borderRadius: '16px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+              border: '3px solid #f59e0b'
+            }} 
+          />
+          <div style={{
+            position: 'absolute',
+            top: '20px', right: '20px',
+            color: '#fff', fontSize: '18px', fontWeight: 'bold',
+            background: 'rgba(0,0,0,0.6)', padding: '6px 14px', borderRadius: '20px'
+          }}>✕ Đóng</div>
+        </div>
+      )}
     </div>
   )
 }

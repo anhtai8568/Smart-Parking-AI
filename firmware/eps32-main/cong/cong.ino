@@ -101,7 +101,7 @@ void closeBarrier() {
   LOGLN("[BARRIER] Dong tu tu...");
   for (int pos = 90; pos >= 0; pos--) {
     myServo.write(pos);
-    delay(15); // 90 steps * 15ms = 1350ms total close time (hạ từ từ)
+    delay(8); // 90 steps * 8ms = 720ms total close time (hạ từ từ nhưng nhanh hơn)
   }
 }
 

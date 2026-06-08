@@ -30,8 +30,25 @@ detector = PlateDetector("models/detect_license.pt")
 recognizer = CharacterRecognizer("models/char.pt")
 print("[OK] He thong da san sang!")
 
+import threading
+
 # Khởi tạo camera mặc định (0 = webcam laptop)
 camera = cv2.VideoCapture(0)
+latest_frame = None
+latest_frame_lock = threading.Lock()
+
+def camera_reader_loop():
+    global latest_frame
+    while True:
+        success, frame = camera.read()
+        if success:
+            with latest_frame_lock:
+                latest_frame = frame
+        time.sleep(0.01)
+
+# Khởi động luồng đọc camera ngầm để tránh xung đột luồng
+reader_thread = threading.Thread(target=camera_reader_loop, daemon=True)
+reader_thread.start()
 
 # Throttle nhận diện để đỡ nặng (mỗi N frame xử lý 1 lần)
 FRAME_SKIP = 6
@@ -55,9 +72,15 @@ def generate_frames():
     global current_plate_text, current_plate_b64, plate_lost_counter
 
     while True:
-        success, frame = camera.read()
-        if not success:
-            break
+        with latest_frame_lock:
+            if latest_frame is None:
+                frame = None
+            else:
+                frame = latest_frame.copy()
+
+        if frame is None:
+            time.sleep(0.03)
+            continue
 
         frame_count += 1
         if frame_count % FRAME_SKIP == 0:
@@ -208,17 +231,17 @@ async def capture_and_scan(gate: str = "in"):
     best_frame  = None
 
     # 1. Đợi khoảng 0.8 giây để xe dừng hẳn và lọt hẳn biển vào khung hình.
-    # Đọc và bỏ qua các frame cũ trong buffer của OpenCV.
-    start_wait = time.time()
-    while time.time() - start_wait < 0.8:
-        camera.read()
-        time.sleep(0.03)
+    time.sleep(0.8)
 
-    # 2. Thử quét camera tối đa 15 frames (~1.5s) để tìm biển số xe rõ nét nhất
+    # 2. Thử lấy và quét từ latest_frame trong tối đa 15 lần (mỗi lần cách nhau 100ms ~1.5s)
     for i in range(15):
-        success, frame = camera.read()
-        if not success:
-            break
+        with latest_frame_lock:
+            frame = latest_frame.copy() if latest_frame is not None else None
+            
+        if frame is None:
+            time.sleep(0.1)
+            continue
+            
         best_frame = frame
         try:
             plates = detector.detect_and_crop(frame)
@@ -231,7 +254,7 @@ async def capture_and_scan(gate: str = "in"):
                     break
         except Exception as e:
             print(f"[capture-and-scan] Error frame {i}: {e}")
-        time.sleep(0.05)
+        time.sleep(0.1)
 
     # 3. Quét AprilTag từ best_frame
     if best_frame is not None:
