@@ -1,9 +1,11 @@
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import cv2
 import numpy as np
 import uvicorn
+import base64
+import time
 
 # Import 2 module bạn vừa tạo
 from utils.detect_license import PlateDetector
@@ -35,6 +37,13 @@ camera = cv2.VideoCapture(0)
 FRAME_SKIP = 6
 frame_count = 0
 last_plate_text = ""
+
+# ===== SCAN RESULT CACHE =====
+# Lưu kết quả nhận diện mới nhất của cổng vào và cổng ra
+last_scan = {
+    "in":  {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None},
+    "out": {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None},
+}
 
 def generate_frames():
     global frame_count, last_plate_text
@@ -149,6 +158,79 @@ async def scan_plate(file: UploadFile = File(...)):
             
     except Exception as e:
         return {"status": "error", "message": str(e), "data": None}
+
+
+@app.post("/api/capture-and-scan")
+async def capture_and_scan(gate: str = "in"):
+    """
+    Chụp frame hiện tại từ webcam, nhận diện biển số xe và AprilTag.
+    Gọi khi cảm biến siêu âm kích hoạt (gate='in' hoặc gate='out').
+    Trả về: plate_number, apriltag_id, ảnh biển số dạng base64.
+    """
+    if gate not in ("in", "out"):
+        return {"status": "error", "message": "gate phải là 'in' hoặc 'out'"}
+
+    success, frame = camera.read()
+    if not success:
+        return {"status": "error", "message": "Không đọc được camera", "data": None}
+
+    plate_text  = None
+    apriltag_id = None
+    plate_b64   = None
+
+    try:
+        # --- Nhận diện biển số ---
+        plates = detector.detect_and_crop(frame)
+        if plates:
+            plate_img  = plates[0]["image"]
+            plate_text = recognizer.process_plate(plate_img)
+
+            # Encode ảnh biển số sang base64
+            _, buf = cv2.imencode(".jpg", plate_img)
+            plate_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
+
+        # --- Nhận diện AprilTag (ArUco) ---
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        aruco_dict   = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+        aruco_params = cv2.aruco.DetectorParameters()
+        detector_ar  = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
+        corners, ids, _ = detector_ar.detectMarkers(gray)
+        if ids is not None and len(ids) > 0:
+            apriltag_id = int(ids[0][0])
+
+    except Exception as e:
+        print(f"[capture-and-scan] Error: {e}")
+
+    # Encode toàn bộ frame (để hiển thị trên dashboard)
+    _, frame_buf = cv2.imencode(".jpg", frame)
+    frame_b64 = "data:image/jpeg;base64," + base64.b64encode(frame_buf.tobytes()).decode()
+
+    result = {
+        "plate":      plate_text,
+        "apriltag":   apriltag_id,
+        "image_b64":  plate_b64 or frame_b64,  # ưu tiên ảnh biển số, fallback frame full
+        "timestamp":  time.strftime("%H:%M %d/%m/%Y"),
+    }
+    last_scan[gate] = result
+
+    return {
+        "status": "success",
+        "gate": gate,
+        "data": result,
+    }
+
+
+@app.get("/api/latest-scan")
+async def get_latest_scan():
+    """
+    Trả về kết quả nhận diện mới nhất của cả 2 cổng.
+    Frontend poll endpoint này mỗi ~2 giây để cập nhật dashboard.
+    """
+    return {
+        "status": "success",
+        "data":   last_scan,
+    }
+
 
 # Lệnh chạy server
 if __name__ == "__main__":

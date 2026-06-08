@@ -1,12 +1,97 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import ParkingSlotGrid from '../../components/common/ParkingSlotGrid'
 import api from '../../services/api'
 
-function DashboardGuard() {
-  const [barrierStatus, setBarrierStatus] = useState(null) // null | 'opening' | 'closing' | 'open' | 'closed' | 'error'
-  const [loadingOpen, setLoadingOpen] = useState(false)
-  const [loadingClose, setLoadingClose] = useState(false)
+const AI_URL = 'http://localhost:8000'
 
+const EMPTY_SCAN = { plate: null, apriltag: null, image_b64: null, timestamp: null }
+
+// Phát tiếng beep cảnh báo qua Web Audio API
+function playAlertBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.type = 'square'
+    osc.frequency.setValueAtTime(880, ctx.currentTime)
+    osc.frequency.setValueAtTime(660, ctx.currentTime + 0.15)
+    gain.gain.setValueAtTime(0.3, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4)
+    osc.start(ctx.currentTime)
+    osc.stop(ctx.currentTime + 0.4)
+  } catch (_) {}
+}
+
+function DashboardGuard() {
+  // ── Barrier control ──
+  const [barrierStatus, setBarrierStatus] = useState(null)
+  const [loadingOpen,   setLoadingOpen]   = useState(false)
+  const [loadingClose,  setLoadingClose]  = useState(false)
+
+  // ── Scan results từ AI (biển số + ảnh) ──
+  const [scanIn,  setScanIn]  = useState(EMPTY_SCAN)
+  const [scanOut, setScanOut] = useState(EMPTY_SCAN)
+
+  // ── Alert: không nhận diện được biển số ──
+  // gate = 'in' | 'out' | null
+  const [noPlateAlert, setNoPlateAlert] = useState(null)
+  const prevScanIn  = useRef(EMPTY_SCAN)
+  const prevScanOut = useRef(EMPTY_SCAN)
+  const alertTimer  = useRef(null)
+
+  // ── Poll /api/latest-scan mỗi 2 giây ──
+  const fetchLatestScan = useCallback(async () => {
+    try {
+      const res  = await fetch(`${AI_URL}/api/latest-scan`)
+      const json = await res.json()
+      if (json.status === 'success') {
+        const newIn  = json.data.in   || EMPTY_SCAN
+        const newOut = json.data.out  || EMPTY_SCAN
+
+        // Phát hiện scan MỚI (timestamp thay đổi) nhưng KHÔNG có biển số
+        const isNewScanIn  = newIn.timestamp  !== prevScanIn.current.timestamp
+        const isNewScanOut = newOut.timestamp !== prevScanOut.current.timestamp
+
+        if (isNewScanIn && newIn.image_b64 && !newIn.plate) {
+          // Scan cổng vào: không thấy biển số
+          setNoPlateAlert('in')
+          playAlertBeep()
+          clearTimeout(alertTimer.current)
+          alertTimer.current = setTimeout(() => setNoPlateAlert(null), 12000)
+        } else if (isNewScanIn && newIn.plate) {
+          // Biển số đã nhận diện được → xóa cảnh báo
+          setNoPlateAlert(null)
+        }
+
+        if (isNewScanOut && newOut.image_b64 && !newOut.plate) {
+          setNoPlateAlert('out')
+          playAlertBeep()
+          clearTimeout(alertTimer.current)
+          alertTimer.current = setTimeout(() => setNoPlateAlert(null), 12000)
+        } else if (isNewScanOut && newOut.plate) {
+          setNoPlateAlert(null)
+        }
+
+        prevScanIn.current  = newIn
+        prevScanOut.current = newOut
+        setScanIn(newIn)
+        setScanOut(newOut)
+      }
+    } catch (_) {}
+  }, [])
+
+  useEffect(() => {
+    fetchLatestScan()
+    const id = setInterval(fetchLatestScan, 2000)
+    return () => {
+      clearInterval(id)
+      clearTimeout(alertTimer.current)
+    }
+  }, [fetchLatestScan])
+
+  // ── Barrier handlers ──
   const handleOpenBarrier = async () => {
     setLoadingOpen(true)
     setBarrierStatus('opening')
@@ -44,32 +129,91 @@ function DashboardGuard() {
     const map = {
       opening: { label: '⏳ Đang mở...', color: '#f59e0b' },
       closing: { label: '⏳ Đang đóng...', color: '#f59e0b' },
-      open: { label: '✅ Barrier đã MỞ', color: '#10b981' },
-      closed: { label: '🔒 Barrier đã ĐÓNG', color: '#6366f1' },
-      error: { label: '❌ Lỗi kết nối MQTT', color: '#ef4444' },
+      open:    { label: '✅ Barrier đã MỞ', color: '#10b981' },
+      closed:  { label: '🔒 Barrier đã ĐÓNG', color: '#6366f1' },
+      error:   { label: '❌ Lỗi kết nối MQTT', color: '#ef4444' },
     }
     const s = map[barrierStatus]
     return (
       <div style={{
-        marginTop: '10px',
-        padding: '8px 14px',
-        borderRadius: '8px',
-        background: s.color + '22',
-        border: `1px solid ${s.color}`,
-        color: s.color,
-        fontWeight: 600,
-        fontSize: '13px',
-        textAlign: 'center',
-        animation: 'fadeInUp 0.3s ease',
+        marginTop: '10px', padding: '8px 14px', borderRadius: '8px',
+        background: s.color + '22', border: `1px solid ${s.color}`,
+        color: s.color, fontWeight: 600, fontSize: '13px',
+        textAlign: 'center', animation: 'fadeInUp 0.3s ease',
       }}>
         {s.label}
       </div>
     )
   }
 
+  // ── Helper: hiển thị biển số + AprilTag ──
+  const formatPlateLabel = (scan) => {
+    if (!scan.plate && !scan.apriltag) return '—'
+    const parts = []
+    if (scan.plate)    parts.push(scan.plate)
+    if (scan.apriltag != null) parts.push(`AprilTag #${scan.apriltag}`)
+    return parts.join('  |  ')
+  }
+
+  // ── PlateBlock component (dùng lại cho vào/ra) ──
+  const PlateBlock = ({ scan, direction }) => {
+    const isIn    = direction === 'in'
+    const label   = isIn ? 'Biển số vào' : 'Biển số ra'
+    const timeLabel = isIn ? 'Giờ vào' : 'Giờ ra'
+    const cls     = isIn ? 'in' : 'out'
+
+    return (
+      <div className={`plate-block ${cls}`}>
+        {/* Text biển số */}
+        <input
+          className="plate-input"
+          type="text"
+          value={formatPlateLabel(scan)}
+          readOnly
+          title={scan.plate || ''}
+          style={{ fontSize: scan.plate ? '13px' : '11px', color: scan.plate ? '#0f172a' : '#94a3b8' }}
+        />
+
+        {/* Ảnh chụp lúc sensor kích hoạt */}
+        <div className={`plate-wrap ${cls}`} style={{ position: 'relative', overflow: 'hidden' }}>
+          <div className="plate-label accent">{label}</div>
+          {scan.image_b64 ? (
+            <img
+              className="plate-media"
+              src={scan.image_b64}
+              alt={label}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+          ) : (
+            // Fallback: stream video liên tục khi chưa có ảnh chụp
+            <img
+              className="plate-media"
+              src={`${AI_URL}/api/video-stream`}
+              alt={`Camera ${label}`}
+            />
+          )}
+          {/* Badge "Đang chờ" khi chưa có ảnh */}
+          {!scan.image_b64 && (
+            <div style={{
+              position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
+              background: 'rgba(0,0,0,0.6)', color: '#fff',
+              fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '999px',
+              whiteSpace: 'nowrap',
+            }}>
+              Chờ sensor kích hoạt
+            </div>
+          )}
+        </div>
+
+        <div className="plate-time">
+          {scan.timestamp ? `${timeLabel}: ${scan.timestamp}` : `${timeLabel}: —`}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div>
-
       <div className="lane-split single-gate">
         <div className="card compare-card lane-exit">
           <div className="card-header">
@@ -79,103 +223,93 @@ function DashboardGuard() {
             <span className="match-badge success">Chế độ: Tự động</span>
           </div>
 
+          {/* ── CẢNH BÁO: Không nhận diện được biển số ── */}
+          {noPlateAlert && (
+            <div className="no-plate-alert">
+              <div className="no-plate-alert-icon">⚠️</div>
+              <div className="no-plate-alert-body">
+                <div className="no-plate-alert-title">
+                  Không nhận diện được biển số xe {noPlateAlert === 'in' ? 'vào' : 'ra'}!
+                </div>
+                <div className="no-plate-alert-msg">
+                  Vui lòng nhắc người dùng <strong>điều chỉnh xe vào đúng khung hình camera</strong> hoặc giơ biển số xe lên trước ống kính.
+                </div>
+              </div>
+              <button
+                className="no-plate-alert-dismiss"
+                onClick={() => setNoPlateAlert(null)}
+                title="Đã xử lý"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           <div className="lane-exit-body">
+            {/* Camera stream liên tục — xe vào / xe ra */}
             <div className="lane-exit-frames">
               <div className="frame frame-vehicle in">
                 <div className="frame-label accent">Xe vào</div>
-                <img
-                  className="frame-media"
-                  src="http://localhost:8000/api/video-stream"
-                  alt="Camera xe vào"
-                />
+                <img className="frame-media" src={`${AI_URL}/api/video-stream`} alt="Camera xe vào" />
               </div>
-
               <div className="frame frame-vehicle out">
                 <div className="frame-label accent">Xe ra</div>
-                <img
-                  className="frame-media"
-                  src="http://localhost:8000/api/video-stream"
-                  alt="Camera xe ra"
-                />
+                <img className="frame-media" src={`${AI_URL}/api/video-stream`} alt="Camera xe ra" />
               </div>
             </div>
 
             <div className="lane-notice">
-              Hệ thống đang theo dõi lượt xe vào/ra.
+              Hệ thống đang theo dõi lượt xe vào/ra. Ảnh biển số cập nhật khi cảm biến kích hoạt.
             </div>
 
             <div className="lane-exit-details">
               <div className="lane-exit-plates">
-                <div className="plate-block in">
-                  <input
-                    className="plate-input"
-                    type="text"
-                    value="59A1-123.45"
-                    readOnly
-                  />
-
-                  <div className="plate-wrap in">
-                    <div className="plate-label accent">Biển số vào</div>
-                    <img
-                      className="plate-media"
-                      src="http://localhost:8000/api/video-stream"
-                      alt="Biển số xe vào"
-                    />
-                  </div>
-
-                  <div className="plate-time">Giờ vào: 09:15 29/04/2026</div>
+                <PlateBlock scan={scanIn}  direction="in" />
+                <div className="total-time">
+                  {(scanIn.timestamp && scanOut.timestamp) ? 'Đang xử lý...' : 'Chờ lượt xe'}
                 </div>
-
-                <div className="total-time">Tổng thời gian: 47 phút</div>
-
-                <div className="plate-block out">
-                  <input
-                    className="plate-input"
-                    type="text"
-                    value="59A1-987.65"
-                    readOnly
-                  />
-
-                  <div className="plate-wrap out">
-                    <div className="plate-label accent">Biển số ra</div>
-                    <img
-                      className="plate-media"
-                      src="http://localhost:8000/api/video-stream"
-                      alt="Biển số xe ra"
-                    />
-                  </div>
-
-                  <div className="plate-time">Giờ ra: 10:02 29/04/2026</div>
-                </div>
+                <PlateBlock scan={scanOut} direction="out" />
               </div>
 
               <div className="card-info">
                 <div className="info-row">
-                  <span>Số thẻ</span>
-                  <strong>THE-09124</strong>
+                  <span>Trạng thái</span>
+                  <strong style={{ color: '#16a34a' }}>
+                    {scanIn.plate ? '🚗 Đã nhận diện' : '⏳ Chờ xe vào'}
+                  </strong>
                 </div>
+
+                {scanIn.plate && (
+                  <div className="info-row">
+                    <span>Biển số vào</span>
+                    <strong>{scanIn.plate}</strong>
+                  </div>
+                )}
+
+                {scanIn.apriltag != null && (
+                  <div className="info-row">
+                    <span>AprilTag ID</span>
+                    <strong>#{scanIn.apriltag}</strong>
+                  </div>
+                )}
+
+                {scanOut.plate && (
+                  <div className="info-row">
+                    <span>Biển số ra</span>
+                    <strong>{scanOut.plate}</strong>
+                  </div>
+                )}
 
                 <div className="info-row">
-                  <span>Loại thẻ</span>
-                  <strong>Thẻ tháng xe máy</strong>
+                  <span>Giờ vào</span>
+                  <strong>{scanIn.timestamp  || '—'}</strong>
                 </div>
-
                 <div className="info-row">
-                  <span>Hạn thẻ</span>
-                  <strong>15/05/2026</strong>
+                  <span>Giờ ra</span>
+                  <strong>{scanOut.timestamp || '—'}</strong>
                 </div>
 
-                <div className="info-row">
-                  <span>Chủ thẻ</span>
-                  <strong>Nguyễn Văn A</strong>
-                </div>
-
-                <div className="info-row">
-                  <span>Số tiền</span>
-                  <strong>8.000 VND</strong>
-                </div>
-
-                {/* ===== ĐIỀU KHIỂN BARRIER THỦ CÔNG ===== */}
+                {/* ── Điều khiển barrier ── */}
                 <div className="barrier-control-panel">
                   <div className="barrier-control-title">
                     <span className="barrier-icon">🚧</span>
@@ -188,11 +322,7 @@ function DashboardGuard() {
                       onClick={handleOpenBarrier}
                       disabled={loadingOpen || loadingClose}
                     >
-                      {loadingOpen ? (
-                        <span className="btn-spinner" />
-                      ) : (
-                        <span className="btn-icon">▲</span>
-                      )}
+                      {loadingOpen ? <span className="btn-spinner" /> : <span className="btn-icon">▲</span>}
                       Mở cổng
                     </button>
                     <button
@@ -201,11 +331,7 @@ function DashboardGuard() {
                       onClick={handleCloseBarrier}
                       disabled={loadingOpen || loadingClose}
                     >
-                      {loadingClose ? (
-                        <span className="btn-spinner" />
-                      ) : (
-                        <span className="btn-icon">▼</span>
-                      )}
+                      {loadingClose ? <span className="btn-spinner" /> : <span className="btn-icon">▼</span>}
                       Đóng cổng
                     </button>
                   </div>
