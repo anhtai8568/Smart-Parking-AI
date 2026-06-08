@@ -5,7 +5,7 @@
 // ===== CẤU HÌNH WI-FI & MQTT =====
 const char* ssid = "Cun Cun";             // <--- Thay bằng tên Wi-Fi của bạn
 const char* password = "12345689";     // <--- Thay bằng mật khẩu Wi-Fi của bạn
-const char* mqtt_server = "192.168.1.95"; // <--- Thay bằng IP máy tính chạy Docker (Ví dụ: 192.168.1.15)
+const char* mqtt_server = "192.168.1.110"; // <--- Thay bằng IP máy tính chạy Docker (Ví dụ: 192.168.1.15)
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -186,9 +186,12 @@ void loop() {
     String data = SerialMega.readStringUntil('\n');
     data.trim();
 
+    // In luôn mọi dữ liệu nhận được từ Mega để kiểm tra thông số
+    Serial.print("[MEGA UART] -> ");
+    Serial.println(data);
+
     if (!receivedMega) {
-      Serial.print("[UART STATUS] -> DA NHAN DUOC TIN HIEU TU ARDUINO MEGA! Du lieu dau tien: ");
-      Serial.println(data);
+      Serial.println("[UART STATUS] -> DA NHAN DUOC TIN HIEU TU ARDUINO MEGA LAN DAU!");
       receivedMega = true;
     }
 
@@ -236,57 +239,60 @@ void loop() {
     Serial.println();
   }
 
-  // ===== 1.5 NHẬN VÀ BÓC TÁCH DỮ LIỆU TỪ UNO (RFID) =====
+  // ===== 1.5 NHẬN VÀ BÓC TÁCH DỮ LIỆU TỪ UNO (RFID DÙNG CHUNG) =====
   if (SerialUno.available()) {
     String data = SerialUno.readStringUntil('\n');
     data.trim();
 
+    // In luôn mọi dữ liệu nhận được từ Uno để kiểm tra thông số
+    Serial.print("[UNO UART] -> ");
+    Serial.println(data);
+
     if (!receivedUno) {
-      Serial.print("[UART STATUS] -> DA NHAN DUOC TIN HIEU TU ARDUINO UNO! Du lieu dau tien: ");
-      Serial.println(data);
+      Serial.println("[UART STATUS] -> DA NHAN DUOC TIN HIEU TU ARDUINO UNO LAN DAU!");
       receivedUno = true;
     }
 
-    if (enableScanID) {
-      if (data.startsWith("IN:")) {
-        String cardID = data.substring(3);
-        Serial.print("QUET THE CONG VAO - ID: ");
-        Serial.println(cardID);
-
+    if (data.startsWith("CARD:")) {
+      String cardID = data.substring(5); // Tách mã thẻ sau tiền tố "CARD:"
+      
+      if (enableScanID) {
+        // TRƯỜNG HỢP 1: Xe đang đợi ở cổng VÀO (Siêu âm 1 phát hiện)
         if (xeDangChoQuetThe) {
+          Serial.print("QUET THE CONG VAO (RFID CHUNG) - ID: ");
+          Serial.println(cardID);
+
           if (soChoTrong > 0) {
-          rfidUid = cardID; // Lưu tạm vào biến tạm rfidUid (xe vãng lai)
-          Serial.print("Da luu rfidUid tam: ");
-          Serial.println(rfidUid);
-          moraochan(); // Gọi hàm mở rào chắn
-          dangChoXeVao = true;
-          xeDaVaoTrong = false;
-          enableScanID = false; // Tắt quét thẻ sau khi nhận dạng thành công
-          
-          // Publish sự kiện thẻ vào lên MQTT
-          client.publish("parking/events/gate/in", cardID.c_str());
-        } else {
+            rfidUid = cardID; // Lưu thẻ vãng lai
+            Serial.print("Da luu rfidUid tam: ");
+            Serial.println(rfidUid);
+            moraochan(); // Mở barrier
+            dangChoXeVao = true;
+            xeDaVaoTrong = false;
+            enableScanID = false; 
+            
+            // Publish sự kiện thẻ vào lên MQTT
+            client.publish("parking/events/gate/in", cardID.c_str());
+          } else {
             Serial.println("Het cho! Khong the mo barrier.");
           }
-        }
-      } 
-      else if (data.startsWith("OUT:")) {
-        String cardID = data.substring(4);
-        Serial.print("QUET THE CONG RA - ID: ");
-        Serial.println(cardID);
+        } 
+        // TRƯỜNG HỢP 2: Xe đang đợi ở cổng RA (Siêu âm 2 phát hiện)
+        else if (xeDangRa) {
+          Serial.print("QUET THE CONG RA (RFID CHUNG) - ID: ");
+          Serial.println(cardID);
 
-        if (xeDangRa) {
           if (cardID == rfidUid) {
             Serial.println("THE KHOP. Mo barrier!");
-          moraochan(); // Gọi hàm mở rào chắn
-          dangChoXeRa = true;
-          xeDaRaNgoai = false;
-          rfidUid = ""; // Xoá biến tạm sau khi khớp thẻ ra
-          enableScanID = false; // Tắt quét thẻ sau khi nhận dạng thành công
-          
-          // Publish sự kiện thẻ ra lên MQTT
-          client.publish("parking/events/gate/out", cardID.c_str());
-        } else {
+            moraochan(); // Mở barrier
+            dangChoXeRa = true;
+            xeDaRaNgoai = false;
+            rfidUid = ""; // Xóa bộ nhớ tạm thẻ ra
+            enableScanID = false; 
+            
+            // Publish sự kiện thẻ ra lên MQTT
+            client.publish("parking/events/gate/out", cardID.c_str());
+          } else {
             Serial.print("THE KHONG KHOP! (The ra: ");
             Serial.print(cardID);
             Serial.print(" | The da luu: ");
@@ -294,16 +300,9 @@ void loop() {
             Serial.println(")");
           }
         }
-      }
-    } else {
-      // Chế độ chờ xe hoặc quét thô từ xa để đăng ký thẻ tháng (không mở cổng)
-      if (data.startsWith("IN:")) {
-        String cardID = data.substring(3);
-        Serial.print("RFID_IN_SCAN_RAW: ");
-        Serial.println(cardID);
-      } else if (data.startsWith("OUT:")) {
-        String cardID = data.substring(4);
-        Serial.print("RFID_OUT_SCAN_RAW: ");
+      } else {
+        // Chế độ quẹt thẻ thô đăng ký thẻ tháng (không mở cổng)
+        Serial.print("RFID_SCAN_RAW: ");
         Serial.println(cardID);
       }
     }

@@ -16,8 +16,8 @@ tx1 D18 mega <--> rx2 d16 esp32
 rx1 d19 mega <--> tx2 d17 esp32
 
 // giao tiếp tx - rx giữa ESP32 và Arduino Uno
-rx d26 esp32 <--> tx d1 uno
-tx d27 esp32 <--> rx d0 uno
+rx d26 esp32 <--> tx d1 uno (dây đen d26)
+tx d27 esp32 <--> rx d0 uno (dây cam d27)
 
 * LƯU Ý QUAN TRỌNG:
 - Khi nạp code cho Arduino Uno, PHẢI rút 2 dây nối TX/RX (D0, D1) với ESP32 ra để tránh xung đột nạp code. Nạp xong cắm lại.
@@ -41,8 +41,5 @@ dây đen: cực âm
 SCK: D13
 MOSI: D11
 MISO: D12
-SS(SDA): D10
-RST: D9
-3.3V: 3.3V
-GND: GND
-
+SS(SDA): D8
+RST: D7

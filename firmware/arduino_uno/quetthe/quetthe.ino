@@ -1,19 +1,12 @@
 #include <SPI.h>
 #include <MFRC522.h>
 
-// ===== KẾT NỐI CHÂN RFID =====
+// ===== KẾT NỐI CHÂN RFID (DÙNG CHUNG 1 ĐẦU ĐỌC) =====
 // SPI Chung: SCK (13), MISO (12), MOSI (11)
-// Cổng VÀO
-#define SS_PIN_IN    10  // Chân SS (SDA) cổng vào
-#define RST_PIN_IN   9   // Chân RST cổng vào
+#define SS_PIN    8   // Chân SS (SDA) nối với D8 (đầu đọc dùng chung)
+#define RST_PIN   7   // Chân RST nối với D7 (đầu đọc dùng chung)
 
-// Cổng RA
-#define SS_PIN_OUT   8   // Chân SS (SDA) cổng ra
-#define RST_PIN_OUT  7   // Chân RST cổng ra
-
-// Khởi tạo các đối tượng RFID
-MFRC522 mfrc522_in(SS_PIN_IN, RST_PIN_IN);
-MFRC522 mfrc522_out(SS_PIN_OUT, RST_PIN_OUT);
+MFRC522 mfrc522(SS_PIN, RST_PIN);
 
 void setup() {
   // Giao tiếp Serial với ESP32 ở baudrate 9600
@@ -22,9 +15,8 @@ void setup() {
 
   SPI.begin(); // Khởi tạo SPI bus
 
-  // Khởi tạo RFID cổng vào và cổng ra
-  mfrc522_in.PCD_Init();
-  mfrc522_out.PCD_Init();
+  // Khởi tạo RFID
+  mfrc522.PCD_Init();
 
   Serial.println("UNO_RFID_READY");
 }
@@ -44,26 +36,14 @@ void loop() {
 
 // Hàm kích hoạt và quét module thẻ RFID
 void quetthe() {
-  // --- 1. KIỂM TRA RFID CỔNG VÀO ---
-  if (mfrc522_in.PICC_IsNewCardPresent() && mfrc522_in.PICC_ReadCardSerial()) {
-    String cardID = getUIDString(mfrc522_in.uid.uidByte, mfrc522_in.uid.size);
-    Serial.println("IN:" + cardID); // Gửi mã thẻ cổng vào qua UART sang ESP32
+  if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
+    String cardID = getUIDString(mfrc522.uid.uidByte, mfrc522.uid.size);
+    Serial.println("CARD:" + cardID); // Gửi mã thẻ chung qua UART
     
     // Dừng đọc thẻ hiện tại
-    mfrc522_in.PICC_HaltA();
-    mfrc522_in.PCD_StopCrypto1();
-    delay(500); // Tránh đọc lặp thẻ quá nhanh
-  }
-
-  // --- 2. KIỂM TRA RFID CỔNG RA ---
-  if (mfrc522_out.PICC_IsNewCardPresent() && mfrc522_out.PICC_ReadCardSerial()) {
-    String cardID = getUIDString(mfrc522_out.uid.uidByte, mfrc522_out.uid.size);
-    Serial.println("OUT:" + cardID); // Gửi mã thẻ cổng ra qua UART sang ESP32
-    
-    // Dừng đọc thẻ hiện tại
-    mfrc522_out.PICC_HaltA();
-    mfrc522_out.PCD_StopCrypto1();
-    delay(500); // Tránh đọc lặp thẻ quá nhanh
+    mfrc522.PICC_HaltA();
+    mfrc522.PCD_StopCrypto1();
+    delay(1000); // Tránh đọc lặp thẻ quá nhanh (tăng lên 1s cho ổn định)
   }
 }
 
