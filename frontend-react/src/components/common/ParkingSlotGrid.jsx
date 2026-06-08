@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../../services/api'
 
 const STATUS = {
@@ -21,17 +21,61 @@ function CarIcon({ color }) {
   )
 }
 
+function playWarningBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(600, ctx.currentTime)
+    osc.frequency.setValueAtTime(400, ctx.currentTime + 0.15)
+    gain.gain.setValueAtTime(0.2, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4)
+    osc.start(ctx.currentTime)
+    osc.stop(ctx.currentTime + 0.4)
+  } catch (_) {}
+}
+
 function ParkingSlotGrid() {
   const [slots, setSlots]           = useState([])
   const [loading, setLoading]       = useState(true)
   const [resetting, setResetting]   = useState(false)
   const [lastUpdated, setLastUpdated] = useState(null)
   const [error, setError]           = useState(null)
+  const prevWarningsRef             = useRef({})
+
+  // Yêu cầu quyền Browser Notification khi mở trang
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission()
+    }
+  }, [])
 
   const fetchSlots = useCallback(async () => {
     try {
       const res = await api.get('/api/slots')
-      setSlots(res.data.data || [])
+      const newSlots = res.data.data || []
+      
+      // Kiểm tra xem có cảnh báo mới nào xuất hiện không
+      newSlots.forEach(slot => {
+        const prevWarning = prevWarningsRef.current[slot.code]
+        if (slot.warning && !prevWarning) {
+          // Phát hiện cảnh báo mới
+          playWarningBeep()
+          
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification(`🚨 Cảnh báo vị trí ${slot.code}`, {
+              body: slot.warning,
+            })
+          }
+        }
+        // Cập nhật lịch sử cảnh báo
+        prevWarningsRef.current[slot.code] = slot.warning
+      })
+
+      setSlots(newSlots)
       setLastUpdated(new Date())
       setError(null)
     } catch (err) {
@@ -65,6 +109,9 @@ function ParkingSlotGrid() {
   const available = slots.filter(s => s.status === 'available').length
   const occupied  = slots.filter(s => s.status === 'occupied').length
   const total     = slots.filter(s => s.status !== 'maintenance').length
+  
+  // Lọc danh sách các chỗ đỗ bị đỗ xe trái phép / bất thường
+  const anomalySlots = slots.filter(s => s.warning)
 
   if (loading) {
     return (
@@ -129,24 +176,51 @@ function ParkingSlotGrid() {
         </div>
       )}
 
+      {/* Banner cảnh báo phát hiện đỗ xe bất thường */}
+      {anomalySlots.length > 0 && (
+        <div style={{
+          padding: '12px 16px', borderRadius: '12px',
+          background: '#fef2f2', border: '2px solid #ef4444',
+          color: '#b91c1c', marginBottom: '16px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+          animation: 'pulse 3s infinite'
+        }}>
+          <h4 style={{ margin: '0 0 6px 0', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold', fontSize: '14px' }}>
+            🚨 CẢNH BÁO: PHÁT HIỆN ĐỖ XE BẤT THƯỜNG!
+          </h4>
+          <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '13px', lineHeight: '1.6' }}>
+            {anomalySlots.map(slot => (
+              <li key={slot.code}>
+                Vị trí <strong>{slot.code}</strong>: {slot.warning}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Grid slots */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
         {slots.map(slot => {
-          const st   = STATUS[slot.status] || STATUS.available
+          const hasWarning = !!slot.warning
+          const st = hasWarning
+            ? { label: 'Bất thường', bg: '#fff5f5', border: '#ef4444', color: '#b91c1c', dot: '#ef4444' }
+            : (STATUS[slot.status] || STATUS.available)
           const time = fmtTime(slot.lastOccupiedAt)
           return (
             <div
               key={slot.code}
               style={{
                 background: st.bg,
-                border: `1.5px solid ${st.border}`,
+                border: `2px solid ${st.border}`,
                 borderRadius: '14px',
                 padding: '18px 16px',
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
                 gap: '8px',
-                transition: 'box-shadow 0.2s',
+                transition: 'all 0.2s',
+                boxShadow: hasWarning ? '0 0 12px rgba(239, 68, 68, 0.3)' : 'none',
+                animation: hasWarning ? 'pulse 2s infinite' : 'none'
               }}
             >
               <div style={{ fontSize: '13px', fontWeight: 800, color: st.color, letterSpacing: '1px', textTransform: 'uppercase' }}>

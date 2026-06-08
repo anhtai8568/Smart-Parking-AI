@@ -32,6 +32,10 @@ const parkingSlotSchema = new mongoose.Schema(
             type: Date,
             default: null,
         },
+        warning: {
+            type: String,
+            default: null,
+        },
     },
     {
         timestamps: true,

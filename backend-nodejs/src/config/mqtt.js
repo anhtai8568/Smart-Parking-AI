@@ -304,15 +304,37 @@ export function connectMQTT() {
                 if (parts.length >= 2) {
                     const slotCode  = parts[0].trim().toUpperCase();
                     const statusStr = parts.slice(1).join(':').trim();
-                    const status    = (statusStr === 'CO XE') ? 'occupied' : 'available';
+                    
+                    let status = 'available';
+                    let warningMsg = null;
+
+                    if (statusStr === 'CO XE') {
+                        const activeSessionsCount = await ParkingSession.countDocuments({ status: 'in_progress' });
+                        if (activeSessionsCount === 0) {
+                            // Chưa nhận xe nào vào bãi -> Có tín hiệu ở cảm biến dò line nhưng đó không phải xe vào chỗ đó
+                            status = 'available';
+                            warningMsg = 'Phát hiện vật cản hoặc lỗi cảm biến (Chưa nhận xe nào vào bãi)!';
+                            console.log(`[Anomaly] Slot ${slotCode} phát hiện tín hiệu dò line giả (chưa nhận xe nào vào bãi).`);
+                        } else {
+                            status = 'occupied';
+                            warningMsg = null;
+                        }
+                    } else {
+                        status = 'available';
+                        warningMsg = null;
+                    }
 
                     await ParkingSlot.findOneAndUpdate(
                         { code: slotCode },
-                        { status, lastOccupiedAt: status === 'occupied' ? new Date() : null },
+                        { 
+                            status, 
+                            lastOccupiedAt: status === 'occupied' ? new Date() : null,
+                            warning: warningMsg
+                        },
                         { new: true, upsert: true }
                     );
 
-                    console.log(`[DB] Slot ${slotCode} → ${status}`);
+                    console.log(`[DB] Slot ${slotCode} → ${status}${warningMsg ? ` | Warning: ${warningMsg}` : ''}`);
                 }
             }
         } catch (error) {

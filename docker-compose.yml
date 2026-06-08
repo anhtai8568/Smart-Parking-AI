@@ -9,6 +9,9 @@ services:
       - "4000:4000"
     environment:
       - MQTT_BROKER_URL=mqtt://mosquitto:1883
+      - AI_SERVER_URL=http://host.docker.internal:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./backend-nodejs:/app
       - /app/node_modules

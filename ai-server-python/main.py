@@ -28,7 +28,7 @@ app.add_middleware(
 print("Đang khởi động hệ thống ParkVision AI...")
 detector = PlateDetector("models/detect_license.pt")
 recognizer = CharacterRecognizer("models/char.pt")
-print("✅ Hệ thống đã sẵn sàng!")
+print("[OK] He thong da san sang!")
 
 # Khởi tạo camera mặc định (0 = webcam laptop)
 camera = cv2.VideoCapture(0)
@@ -37,6 +37,11 @@ camera = cv2.VideoCapture(0)
 FRAME_SKIP = 6
 frame_count = 0
 last_plate_text = ""
+
+# Active Plate Tracking State
+current_plate_text = None
+current_plate_b64 = None
+plate_lost_counter = 0
 
 # ===== SCAN RESULT CACHE =====
 # Lưu kết quả nhận diện mới nhất của cổng vào và cổng ra
@@ -47,6 +52,7 @@ last_scan = {
 
 def generate_frames():
     global frame_count, last_plate_text
+    global current_plate_text, current_plate_b64, plate_lost_counter
 
     while True:
         success, frame = camera.read()
@@ -58,12 +64,36 @@ def generate_frames():
             try:
                 plates = detector.detect_and_crop(frame)
                 if plates:
-                    plate_img = plates[0]["image"]
-                    plate_text = recognizer.process_plate(plate_img)
-                    if plate_text:
-                        last_plate_text = plate_text
-            except Exception:
-                pass
+                    plate_lost_counter = 0
+                    if current_plate_text is None:
+                        # Phát hiện biển số lần đầu -> Chụp lại hình và nhận diện
+                        plate_img = plates[0]["image"]
+                        plate_text = recognizer.process_plate(plate_img)
+                        if plate_text:
+                            current_plate_text = plate_text
+                            last_plate_text = plate_text
+                            
+                            # Encode ảnh biển số sang base64
+                            _, buf = cv2.imencode(".jpg", plate_img)
+                            current_plate_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
+                            
+                            # Tự động hiển thị trên khung biển số của web ngay lập tức
+                            for gate in ["in", "out"]:
+                                # Chỉ ghi đè nếu chưa có cảnh báo lỗi và chưa được khóa bởi sensor
+                                last_scan[gate] = {
+                                    "plate": current_plate_text,
+                                    "apriltag": None,
+                                    "image_b64": current_plate_b64,
+                                    "timestamp": time.strftime("%H:%M %d/%m/%Y"),
+                                    "warning": None,
+                                }
+                else:
+                    plate_lost_counter += 1
+                    if plate_lost_counter > 15:  # Không thấy biển trong ~15 lần check (~3 giây)
+                        current_plate_text = None
+                        current_plate_b64 = None
+            except Exception as e:
+                print(f"[generate_frames] Error: {e}")
 
         if last_plate_text:
             cv2.rectangle(frame, (10, 10), (360, 60), (0, 0, 0), -1)
@@ -165,45 +195,60 @@ async def capture_and_scan(gate: str = "in"):
     """
     Chụp frame hiện tại từ webcam, nhận diện biển số xe và AprilTag.
     Gọi khi cảm biến siêu âm kích hoạt (gate='in' hoặc gate='out').
-    Trả về: plate_number, apriltag_id, ảnh biển số dạng base64.
     """
+    global current_plate_text, current_plate_b64
+    
     if gate not in ("in", "out"):
         return {"status": "error", "message": "gate phải là 'in' hoặc 'out'"}
-
-    success, frame = camera.read()
-    if not success:
-        return {"status": "error", "message": "Không đọc được camera", "data": None}
 
     plate_text  = None
     apriltag_id = None
     plate_b64   = None
+    frame_b64   = None
+    best_frame  = None
 
-    try:
-        # --- Nhận diện biển số ---
-        plates = detector.detect_and_crop(frame)
-        if plates:
-            plate_img  = plates[0]["image"]
-            plate_text = recognizer.process_plate(plate_img)
+    # 1. Đợi khoảng 0.8 giây để xe dừng hẳn và lọt hẳn biển vào khung hình.
+    # Đọc và bỏ qua các frame cũ trong buffer của OpenCV.
+    start_wait = time.time()
+    while time.time() - start_wait < 0.8:
+        camera.read()
+        time.sleep(0.03)
 
-            # Encode ảnh biển số sang base64
-            _, buf = cv2.imencode(".jpg", plate_img)
-            plate_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
+    # 2. Thử quét camera tối đa 15 frames (~1.5s) để tìm biển số xe rõ nét nhất
+    for i in range(15):
+        success, frame = camera.read()
+        if not success:
+            break
+        best_frame = frame
+        try:
+            plates = detector.detect_and_crop(frame)
+            if plates:
+                plate_img  = plates[0]["image"]
+                plate_text = recognizer.process_plate(plate_img)
+                if plate_text:
+                    _, buf = cv2.imencode(".jpg", plate_img)
+                    plate_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
+                    break
+        except Exception as e:
+            print(f"[capture-and-scan] Error frame {i}: {e}")
+        time.sleep(0.05)
 
-        # --- Nhận diện AprilTag (ArUco) ---
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        aruco_dict   = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
-        aruco_params = cv2.aruco.DetectorParameters()
-        detector_ar  = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
-        corners, ids, _ = detector_ar.detectMarkers(gray)
-        if ids is not None and len(ids) > 0:
-            apriltag_id = int(ids[0][0])
+    # 3. Quét AprilTag từ best_frame
+    if best_frame is not None:
+        try:
+            gray = cv2.cvtColor(best_frame, cv2.COLOR_BGR2GRAY)
+            aruco_dict   = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+            aruco_params = cv2.aruco.DetectorParameters()
+            detector_ar  = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
+            corners, ids, _ = detector_ar.detectMarkers(gray)
+            if ids is not None and len(ids) > 0:
+                apriltag_id = int(ids[0][0])
+        except Exception:
+            pass
 
-    except Exception as e:
-        print(f"[capture-and-scan] Error: {e}")
-
-    # Encode toàn bộ frame (để hiển thị trên dashboard)
-    _, frame_buf = cv2.imencode(".jpg", frame)
-    frame_b64 = "data:image/jpeg;base64," + base64.b64encode(frame_buf.tobytes()).decode()
+        # Encode full frame để fallback
+        _, frame_buf = cv2.imencode(".jpg", best_frame)
+        frame_b64 = "data:image/jpeg;base64," + base64.b64encode(frame_buf.tobytes()).decode()
 
     warning_msg = None
     if not plate_text:
@@ -212,7 +257,7 @@ async def capture_and_scan(gate: str = "in"):
     result = {
         "plate":      plate_text,
         "apriltag":   apriltag_id,
-        "image_b64":  plate_b64 or frame_b64,  # ưu tiên ảnh biển số, fallback frame full
+        "image_b64":  plate_b64 or frame_b64,
         "timestamp":  time.strftime("%H:%M %d/%m/%Y"),
         "warning":    warning_msg,
     }
@@ -223,6 +268,23 @@ async def capture_and_scan(gate: str = "in"):
         "gate": gate,
         "data": result,
     }
+
+@app.post("/api/clear-scan")
+async def clear_scan(payload: dict = None):
+    """
+    Reset kết quả quét của cổng (in/out/all) về giá trị trống.
+    """
+    global current_plate_text, current_plate_b64
+    current_plate_text = None
+    current_plate_b64 = None
+    
+    gate = payload.get("gate") if payload else None
+    if gate in last_scan:
+        last_scan[gate] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None}
+    else:
+        last_scan["in"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None}
+        last_scan["out"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None}
+    return {"status": "success", "message": "Đã reset kết quả quét."}
 
 
 @app.get("/api/latest-scan")

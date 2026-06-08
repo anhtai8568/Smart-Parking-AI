@@ -98,8 +98,11 @@ void openBarrier() {
 }
 
 void closeBarrier() {
-  LOGLN("[BARRIER] Dong!");
-  myServo.write(0);
+  LOGLN("[BARRIER] Dong tu tu...");
+  for (int pos = 90; pos >= 0; pos--) {
+    myServo.write(pos);
+    delay(15); // 90 steps * 15ms = 1350ms total close time (hạ từ từ)
+  }
 }
 
 // ===== XỬ LÝ THẺ RFID =====
