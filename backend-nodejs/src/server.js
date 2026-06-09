@@ -3,6 +3,7 @@ import dns from 'dns'
 import app from './app.js'
 import { connectDatabase } from './config/database.js'
 import { connectMQTT } from './config/mqtt.js'
+import User from '../models/user.js'
 
 dns.setServers(['8.8.8.8', '8.8.4.4'])
 
@@ -11,6 +12,8 @@ const port = Number(process.env.PORT || 4000)
 async function startServer() {
     try {
         await connectDatabase()
+        // Đồng bộ index với schema (fix index không có sparse từ phiên bản cũ)
+        await User.syncIndexes()
         connectMQTT()
         app.listen(port, () => {
             console.log(`Backend listening on http://localhost:${port}`)

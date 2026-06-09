@@ -192,9 +192,12 @@ export async function register(req, res) {
         })
     } catch (error) {
         if (error?.code === 11000) {
+            const field = Object.keys(error.keyPattern || {})[0]
+            const fieldLabels = { username: 'Tên đăng nhập', email: 'Email', phone: 'Số điện thoại' }
+            const label = fieldLabels[field] || 'Thông tin tài khoản'
             return res.status(409).json({
                 status: 'error',
-                message: 'User information already exists',
+                message: `${label} đã tồn tại`,
             })
         }
 
