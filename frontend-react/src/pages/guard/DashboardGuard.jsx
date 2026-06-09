@@ -305,10 +305,96 @@ function DashboardGuard() {
           </div>
         )}
 
-        <div className="info-row">
-          <span>{timeLabel}</span>
-          <strong>{scan.timestamp || '—'}</strong>
-        </div>
+        {scan.entryTime ? (
+          <>
+            <div className="info-row">
+              <span>Giờ vào</span>
+              <strong>{scan.entryTime}</strong>
+            </div>
+            <div className="info-row">
+              <span>Giờ ra</span>
+              <strong>{scan.exitTime || scan.timestamp || '—'}</strong>
+            </div>
+          </>
+        ) : (
+          <div className="info-row">
+            <span>{timeLabel}</span>
+            <strong>{scan.timestamp || '—'}</strong>
+          </div>
+        )}
+
+        {scan.fee !== undefined && scan.fee !== null && (
+          <div className="info-row">
+            <span>Phí đỗ xe</span>
+            <strong style={{ color: '#dc2626', fontSize: '14px', fontWeight: 800 }}>
+              {Number(scan.fee).toLocaleString('vi-VN')} VNĐ
+            </strong>
+          </div>
+        )}
+
+        {/* ── PANEL THANH TOÁN CHO XE RA ── */}
+        {!isIn && scan.fee > 0 && (
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            borderRadius: '10px',
+            border: `1px solid ${scan.paymentStatus === 'paid' ? '#10b981' : '#f59e0b'}`,
+            background: scan.paymentStatus === 'paid' ? '#f0fdf4' : '#fffbeb',
+            textAlign: 'center',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+            animation: 'fadeInUp 0.3s ease'
+          }}>
+            <div style={{ fontWeight: 800, fontSize: '11px', color: '#1e293b', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              💳 HÌNH THỨC THANH TOÁN
+            </div>
+            
+            {scan.paymentStatus === 'paid' ? (
+              <div style={{ color: '#15803d', fontWeight: 800, fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px 0' }}>
+                <span style={{ fontSize: '16px' }}>✓</span> ĐÃ THANH TOÁN THÀNH CÔNG!
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '8px', lineHeight: '1.4' }}>
+                  Quét mã VietQR chuyển khoản (Hệ thống tự nhận diện và mở cổng):
+                </div>
+                {scan.qrUrl && (
+                  <div style={{ margin: '8px auto', width: '140px', height: '140px', background: '#fff', padding: '6px', borderRadius: '8px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <img src={scan.qrUrl} alt="Sepay VietQR Code" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                  </div>
+                )}
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '4px 8px', borderRadius: '6px', display: 'inline-block', fontFamily: 'monospace', border: '1px solid #fde68a', marginBottom: '8px' }}>
+                  Cú pháp: DX {scan.rfid}
+                </div>
+                
+                <div style={{ borderTop: '1px dashed #cbd5e1', margin: '8px 0' }}></div>
+                
+                <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '8px' }}>
+                  Hoặc nếu người dùng trả tiền mặt:
+                </div>
+                <button
+                  onClick={async () => {
+                    try {
+                      await api.post('/api/gate/open', { gate: 'out' });
+                    } catch (err) {
+                      alert('Lỗi khi mở cổng thủ công: ' + err.message);
+                    }
+                  }}
+                  style={{
+                    background: '#16a34a', color: '#fff', border: 'none',
+                    padding: '8px 14px', borderRadius: '8px', fontSize: '12px',
+                    fontWeight: 700, cursor: 'pointer', display: 'inline-flex',
+                    alignItems: 'center', gap: '6px', boxShadow: '0 2px 4px rgba(22,163,74,0.2)',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.background = '#15803d'}
+                  onMouseOut={(e) => e.currentTarget.style.background = '#16a34a'}
+                >
+                  💵 Xác nhận tiền mặt & Mở cổng
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── PANEL ĐỐI CHIẾU BIỂN SỐ (chỉ hiện khi có lệch biển) ── */}
         {parsed && parsed.type === 'mismatch_visitor' && (

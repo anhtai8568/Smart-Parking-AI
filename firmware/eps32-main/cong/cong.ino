@@ -22,7 +22,8 @@
 // ===== CẤU HÌNH WI-FI & MQTT =====
 const char* ssid        = "Cun Cun";
 const char* password    = "12345689";
-const char* mqtt_server = "smartparking.local";
+const char* mqtt_server = "172.20.10.3";
+
 
 WiFiClient   espClient;
 PubSubClient client(espClient);
@@ -300,13 +301,27 @@ void mqttReconnect() {
   if (now - lastReconnectAttempt < 5000) return;
   lastReconnectAttempt = now;
 
-  LOGLN("[MQTT] Dang do tim IP cua may tinh 'smartparking' qua mDNS...");
-  IPAddress serverIP = MDNS.queryHost("smartparking");
-  
-  if (serverIP.toString() != "0.0.0.0") {
-    LOG("[MQTT] Da tim thay IP: "); LOGLN(serverIP.toString());
-    client.setServer(serverIP, 1883);
+  IPAddress serverIP;
+  bool resolved = false;
 
+  // 1. Kiểm tra xem mqtt_server có phải là địa chỉ IP hợp lệ không
+  if (serverIP.fromString(mqtt_server)) {
+    LOG("[MQTT] Su dung IP tinh tu cau hinh: "); LOGLN(mqtt_server);
+    client.setServer(serverIP, 1883);
+    resolved = true;
+  } 
+  // 2. Nếu không phải IP, dò tìm qua mDNS
+  else {
+    LOGLN("[MQTT] Dang do tim IP cua may tinh qua mDNS...");
+    serverIP = MDNS.queryHost("smartparking");
+    if (serverIP.toString() != "0.0.0.0") {
+      LOG("[MQTT] Da tim thay IP qua mDNS: "); LOGLN(serverIP.toString());
+      client.setServer(serverIP, 1883);
+      resolved = true;
+    }
+  }
+
+  if (resolved) {
     String id = "ESP32-Gate-" + String(random(0xffff), HEX);
     LOGLN("[MQTT] Dang ket noi...");
     if (client.connect(id.c_str())) {
@@ -320,11 +335,10 @@ void mqttReconnect() {
       mqttWasConnected = false;
     }
   } else {
-    LOGLN("[MQTT ERROR] Khong do tim thay may tinh nao co ten la 'smartparking' trong mang!");
+    LOGLN("[MQTT ERROR] Khong do tim thay may tinh 'smartparking' trong mang!");
     LOGLN("=> HUONG DAN KAC PHUC:");
-    LOGLN("   1. Kiem tra xem ban da doi ten may tinh Windows thanh 'smartparking' chua (System -> About).");
+    LOGLN("   1. Nhap truc tiep dia chi IP cua may tinh vao bien mqtt_server trong firmware.");
     LOGLN("   2. Kiem tra xem may tinh va ESP32 co dang ket noi chung 1 mang Wi-Fi hay khong.");
-    LOGLN("   3. Thu tat va bat lai ket noi Wi-Fi cua may tinh.");
     mqttWasConnected = false;
   }
 }

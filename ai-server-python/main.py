@@ -88,8 +88,8 @@ plate_lost_counter = 0
 # ===== SCAN RESULT CACHE =====
 # Lưu kết quả nhận diện mới nhất của cổng vào và cổng ra
 last_scan = {
-    "in":  {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None},
-    "out": {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None},
+    "in":  {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None, "entryTime": None, "exitTime": None, "fee": None, "paymentStatus": None, "qrUrl": None},
+    "out": {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None, "entryTime": None, "exitTime": None, "fee": None, "paymentStatus": None, "qrUrl": None},
 }
 
 # Cấu trúc lưu trữ biển số nhận diện từ livestream độc lập theo từng cổng
@@ -319,6 +319,11 @@ async def capture_and_scan(gate: str = "in"):
             "timestamp": time.strftime("%H:%M %d/%m/%Y"),
             "warning":   None,
             "rfid":      existing_rfid,
+            "entryTime": None,
+            "exitTime":  None,
+            "fee":       None,
+            "paymentStatus": None,
+            "qrUrl":     None,
         }
 
     # 1. Nếu livestream đang nhìn thấy biển số trực tiếp cho cổng này và còn mới (< 3.0s), sử dụng luôn
@@ -443,12 +448,12 @@ async def clear_scan(payload: dict = None):
     gate = payload.get("gate") if payload else None
     with scan_lock:
         if gate in last_scan:
-            last_scan[gate] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None}
+            last_scan[gate] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None, "entryTime": None, "exitTime": None, "fee": None, "paymentStatus": None, "qrUrl": None}
             if gate in livestream_cache:
                 livestream_cache[gate] = {"text": None, "b64": None, "timestamp": 0}
         else:
-            last_scan["in"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None}
-            last_scan["out"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None}
+            last_scan["in"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None, "entryTime": None, "exitTime": None, "fee": None, "paymentStatus": None, "qrUrl": None}
+            last_scan["out"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None, "entryTime": None, "exitTime": None, "fee": None, "paymentStatus": None, "qrUrl": None}
             livestream_cache["in"] = {"text": None, "b64": None, "timestamp": 0}
             livestream_cache["out"] = {"text": None, "b64": None, "timestamp": 0}
     return {"status": "success", "message": "Đã reset kết quả quét."}
@@ -486,27 +491,20 @@ async def update_scan_warning(payload: dict, request: Request):
         raise HTTPException(status_code=403, detail="Access denied. Local or Docker network only.")
 
     gate = payload.get("gate", "in")
-    warning = payload.get("warning", None)
-    rfid = payload.get("rfid", None)
-    plate = payload.get("plate", None)
-    image_b64 = payload.get("image_b64", None)
-    timestamp = payload.get("timestamp", None)
     
     with scan_lock:
         if gate in last_scan:
-            if warning is not None or "warning" in payload:
-                last_scan[gate]["warning"] = warning
-            if rfid is not None or "rfid" in payload:
-                last_scan[gate]["rfid"] = rfid
-            if plate is not None:  # Không cho phép ghi đè None/null lên kết quả đã nhận diện của AI
-                last_scan[gate]["plate"] = plate
-            if image_b64 is not None:  # Không cho phép ghi đè None/null
-                last_scan[gate]["image_b64"] = image_b64
-            if timestamp is not None or "timestamp" in payload:
-                last_scan[gate]["timestamp"] = timestamp
+            # Sao chép động toàn bộ các trường nhận được từ payload sang cache
+            for key, val in payload.items():
+                if key == "gate":
+                    continue
+                # Tránh ghi đè None lên plate và image_b64 nếu chúng đã có dữ liệu trước đó
+                if key in ["plate", "image_b64"] and val is None:
+                    continue
+                last_scan[gate][key] = val
             
             # Print log ra để debug chính xác dòng chạy
-            print(f"[update_scan_warning] Cổng {gate} -> RFID: {last_scan[gate]['rfid']}, BIỂN SỐ: {last_scan[gate]['plate']}, CẢNH BÁO: {last_scan[gate]['warning']}")
+            print(f"[update_scan_warning] Cổng {gate} -> RFID: {last_scan[gate].get('rfid')}, BIỂN SỐ: {last_scan[gate].get('plate')}, CẢNH BÁO: {last_scan[gate].get('warning')}, PHÍ: {last_scan[gate].get('fee')}, TT: {last_scan[gate].get('paymentStatus')}")
             
     return {"status": "success", "message": "Cập nhật cảnh báo thành công"}
 

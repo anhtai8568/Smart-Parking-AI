@@ -16,18 +16,22 @@ export async function openBarrier(req, res) {
 
         let plate = '';
         const sessions = getSessions();
-        
-        // Xác định cổng đang cần xử lý thủ công (ưu tiên cổng nào vừa cập nhật gần nhất)
-        let activeGate = null;
         const inSess = sessions.in;
         const outSess = sessions.out;
         
-        if (inSess.status !== 'idle' && outSess.status !== 'idle') {
-            activeGate = inSess.lastUpdatedAt > outSess.lastUpdatedAt ? 'in' : 'out';
-        } else if (inSess.status !== 'idle') {
-            activeGate = 'in';
-        } else if (outSess.status !== 'idle') {
-            activeGate = 'out';
+        // Nhận gate chỉ định từ request body (nếu có)
+        const { gate: reqGate } = req.body || {}
+        let activeGate = (reqGate === 'in' || reqGate === 'out') ? reqGate : null;
+        
+        if (!activeGate) {
+            // Tự động xác định cổng đang cần xử lý thủ công (ưu tiên cổng nào vừa cập nhật gần nhất)
+            if (inSess.status !== 'idle' && outSess.status !== 'idle') {
+                activeGate = inSess.lastUpdatedAt > outSess.lastUpdatedAt ? 'in' : 'out';
+            } else if (inSess.status !== 'idle') {
+                activeGate = 'in';
+            } else if (outSess.status !== 'idle') {
+                activeGate = 'out';
+            }
         }
 
         try {

@@ -14,6 +14,21 @@ const OUT_TIMEOUT = 5000;   // 5 giây
 let mqttClient = null;
 export function getMQTTClient() { return mqttClient; }
 
+// SePay configurations for VietQR generation
+const SEPAY_ACCOUNT = process.env.SEPAY_ACCOUNT || '96247KCHIP';
+const SEPAY_BANK_CODE = process.env.SEPAY_BANK_CODE || 'BIDV';
+const SEPAY_QR_BASE_URL = process.env.SEPAY_QR_BASE_URL || 'https://qr.sepay.vn/img';
+
+function buildVietQrUrl({ amount, code }) {
+    const params = new URLSearchParams();
+    params.set('acc', SEPAY_ACCOUNT);
+    if (SEPAY_BANK_CODE) params.set('bank', SEPAY_BANK_CODE);
+    if (amount) params.set('amount', String(amount));
+    if (code) params.set('des', code);
+    return `${SEPAY_QR_BASE_URL}?${params.toString()}`;
+}
+
+
 // ─── Session Store ────────────────────────────────────────────────────────────
 // Mỗi cổng có một session riêng biệt, in-memory
 let _sessionCounter = 0;
@@ -388,6 +403,14 @@ async function handleExitValidation(sessionId, rfid, plate, image_b64) {
                     activeSession.feeAmount       = 0;
                     activeSession.paymentStatus   = 'paid';
                     await activeSession.save();
+
+                    // Gửi thông tin thành công lên AI server
+                    await updateScanInfo('out', null, normalizedRfid, plate, image_b64, {
+                        entryTime: activeSession.entryAt.toLocaleTimeString('vi-VN') + ' ' + activeSession.entryAt.toLocaleDateString('vi-VN'),
+                        exitTime: activeSession.exitAt.toLocaleTimeString('vi-VN') + ' ' + activeSession.exitAt.toLocaleDateString('vi-VN'),
+                        fee: 0,
+                        paymentStatus: 'paid'
+                    });
                     return true;
                 } else {
                     console.log(`[SESSION ${sessionId}] Monthly OUT: no active session!`);
@@ -396,9 +419,22 @@ async function handleExitValidation(sessionId, rfid, plate, image_b64) {
                 }
             } else {
                 console.log(`[SESSION ${sessionId}] Monthly OUT mismatch: registered=${vehicle.licensePlate}, scanned=${plate}`);
+                // Lệch biển số xe tháng: Vẫn hiển thị giờ vào/ra trên dashboard
+                const activeSession = await ParkingSession.findOne({
+                    rfid: normalizedRfid,
+                    status: 'in_progress',
+                });
+                const extra = {};
+                if (activeSession) {
+                    const now = new Date();
+                    extra.entryTime = activeSession.entryAt.toLocaleTimeString('vi-VN') + ' ' + activeSession.entryAt.toLocaleDateString('vi-VN');
+                    extra.exitTime = now.toLocaleTimeString('vi-VN') + ' ' + now.toLocaleDateString('vi-VN');
+                    extra.fee = 0;
+                    extra.paymentStatus = 'paid';
+                }
                 await updateScanInfo('out',
                     `Lệch biển số xe tháng! Đăng ký: ${vehicle.licensePlate}, AI đọc: ${plate}`,
-                    normalizedRfid, plate, image_b64
+                    normalizedRfid, plate, image_b64, extra
                 );
                 return false;
             }
@@ -419,25 +455,46 @@ async function handleExitValidation(sessionId, rfid, plate, image_b64) {
     if (activeSession) {
         const cleanEntry = activeSession.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
         const cleanExit  = plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+        const now = new Date();
+        const entryTimeStr = activeSession.entryAt.toLocaleTimeString('vi-VN') + ' ' + activeSession.entryAt.toLocaleDateString('vi-VN');
+        const exitTimeStr = now.toLocaleTimeString('vi-VN') + ' ' + now.toLocaleDateString('vi-VN');
+        const fee = 10000;
+        const qrUrl = buildVietQrUrl({ amount: fee, code: `DX${normalizedRfid}` });
 
         if (cleanEntry === cleanExit) {
             console.log(`[SESSION ${sessionId}] Visitor OUT matched`);
-            activeSession.exitAt          = new Date();
+            activeSession.exitAt          = now;
             activeSession.exitMethod      = 'rfid';
             activeSession.status          = 'completed';
             activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
-            activeSession.feeAmount       = 10000;
+            activeSession.feeAmount       = fee;
             activeSession.paymentStatus   = 'paid';
             await activeSession.save();
+
+            // Gửi thông tin thành công lên AI server
+            await updateScanInfo('out', null, normalizedRfid, plate, image_b64, {
+                entryTime: entryTimeStr,
+                exitTime: exitTimeStr,
+                fee: fee,
+                paymentStatus: 'paid',
+                qrUrl
+            });
             return true;
-        } else {
-            console.log(`[SESSION ${sessionId}] Visitor OUT mismatch: entry=${activeSession.licensePlate}, exit=${plate}`);
-            await updateScanInfo('out',
-                `Lệch biển số lúc ra! Vào: ${activeSession.licensePlate}, Ra: ${plate}`,
-                normalizedRfid, plate, image_b64
-            );
-            return false;
-        }
+          } else {
+              console.log(`[SESSION ${sessionId}] Visitor OUT mismatch: entry=${activeSession.licensePlate}, exit=${plate}`);
+              // Lệch biển số xe vãng lai lúc ra: Gửi cảnh báo kèm giờ vào/ra, phí, qrUrl để bảo vệ thấy
+              await updateScanInfo('out',
+                  `Lệch biển số lúc ra! Vào: ${activeSession.licensePlate}, Ra: ${plate}`,
+                  normalizedRfid, plate, image_b64, {
+                      entryTime: entryTimeStr,
+                      exitTime: exitTimeStr,
+                      fee: fee,
+                      paymentStatus: 'unpaid',
+                      qrUrl
+                  }
+              );
+              return false;
+          }
     } else {
         console.log(`[SESSION ${sessionId}] Visitor OUT: RFID=${normalizedRfid} — no entry session found in DB!`);
         await updateScanInfo('out', 'Thẻ chưa quét lượt vào!', normalizedRfid, plate, image_b64);
@@ -526,9 +583,9 @@ async function triggerAIScan(gate) {
     }
 }
 
-async function updateScanInfo(gate, warning, rfid, plate, image_b64) {
+export async function updateScanInfo(gate, warning, rfid, plate, image_b64, extraData = {}) {
     try {
-        const body = { gate };
+        const body = { gate, ...extraData };
         // Chỉ truyền các tham số khác null/undefined để tránh ghi đè dữ liệu AI đã nhận dạng trên FastAPI
         if (warning    !== undefined && warning   !== null) body.warning    = warning;
         if (rfid       !== undefined && rfid      !== null) body.rfid       = rfid;
@@ -636,6 +693,11 @@ export function connectMQTT() {
 
         try {
             if (topic === 'parking/events/sensor/in') {
+                // Nếu cổng ra đang bận (xe đang ra) -> Bỏ qua cảm biến vào để tránh nhiễu chéo
+                if (sessions.out.status !== 'idle') {
+                    console.log(`[SENSOR IN] Ignored because exit gate is active (status=${sessions.out.status})`);
+                    return;
+                }
                 createSession('in');
                 const aiData = await triggerAIScan('in');
                 // Xe ô tô tháng nhận diện qua AprilTag (ưu tiên cao nhất, không cần RFID)
@@ -646,6 +708,11 @@ export function connectMQTT() {
                 }
             }
             else if (topic === 'parking/events/sensor/out') {
+                // Nếu cổng vào đang bận (xe đang vào) -> Bỏ qua cảm biến ra để tránh nhiễu chéo
+                if (sessions.in.status !== 'idle') {
+                    console.log(`[SENSOR OUT] Ignored because entry gate is active (status=${sessions.in.status})`);
+                    return;
+                }
                 createSession('out');
                 const aiData = await triggerAIScan('out');
                 const handledByTag = await handleAprilTagAutoEntry('out', aiData);

@@ -128,11 +128,6 @@ export async function handleSePayWebhook(req, res) {
             return respondSuccess(res)
         }
 
-        const code = typeof payload.code === 'string' ? payload.code.trim() : ''
-        if (!code) {
-            return respondSuccess(res)
-        }
-
         const amount = Number(payload.transferAmount)
         if (!Number.isFinite(amount) || amount <= 0) {
             return respondSuccess(res)
@@ -145,6 +140,88 @@ export async function handleSePayWebhook(req, res) {
                 providerTransactionId: transactionId,
             })
             if (existing) {
+                return respondSuccess(res)
+            }
+        }
+
+        // ─── XỬ LÝ THANH TOÁN PHÍ ĐỖ XE VÃNG LAI QUA SEPAY ───
+        const code = typeof payload.code === 'string' ? payload.code.trim() : ''
+        const rawContent = typeof payload.content === 'string' ? payload.content.trim().toUpperCase() : ''
+        
+        let parkingRfid = null
+        if (code.startsWith('DX')) {
+            parkingRfid = code.slice(2).trim().toUpperCase()
+        } else {
+            const match = rawContent.match(/DX\s*([A-Z0-9]{4,20})/)
+            if (match) {
+                parkingRfid = match[1]
+            }
+        }
+
+        if (parkingRfid) {
+            const ParkingSession = (await import('../../models/parkingsession.js')).default
+            const activeSession = await ParkingSession.findOne({
+                rfid: parkingRfid,
+                status: 'in_progress'
+            })
+            
+            if (activeSession) {
+                console.log(`[SePay Webhook] Phát hiện thanh toán phí đỗ xe cho thẻ RFID: ${parkingRfid}`)
+                activeSession.exitAt          = new Date()
+                activeSession.exitMethod      = 'qr'
+                activeSession.status          = 'completed'
+                activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000)
+                activeSession.feeAmount       = amount
+                activeSession.paymentStatus   = 'paid'
+                activeSession.notes += ` | Thanh toán tự động qua SePay Webhook GD: ${transactionId || 'N/A'}`
+                await activeSession.save()
+
+                // Tạo WalletTransaction ghi nhận doanh thu phí đỗ xe (chỉ nếu có userId)
+                if (activeSession.userId) {
+                    await WalletTransaction.create({
+                        userId: activeSession.userId,
+                        type: 'parking_fee',
+                        direction: 'debit',
+                        amount: amount,
+                        method: 'sepay',
+                        status: 'success',
+                        description: `Thanh toán phí đỗ xe RFID: ${parkingRfid}`,
+                        provider: 'sepay',
+                        providerTransactionId: transactionId || null,
+                        paymentCode: `DX${parkingRfid}`,
+                        referenceCode: payload.referenceCode || null,
+                        sessionId: activeSession._id
+                    })
+                }
+
+                // Gửi lệnh mở barrier qua MQTT
+                const { getMQTTClient, getSessions, updateScanInfo } = await import('../config/mqtt.js')
+                const mqttClient = getMQTTClient()
+                if (mqttClient && mqttClient.connected) {
+                    const cmd = `OPEN:${activeSession.licensePlate || 'XE_RA'}`
+                    mqttClient.publish('parking/commands/gate', cmd)
+                    console.log(`[SePay Webhook] Đã publish lệnh MỞ barrier qua MQTT cho xe: ${activeSession.licensePlate}`)
+                }
+
+                // Cập nhật trạng thái 'paid' lên AI server để dashboard của bảo vệ nhận biết ngay
+                try {
+                    await updateScanInfo('out', null, parkingRfid, activeSession.licensePlate, null, {
+                        entryTime: activeSession.entryAt.toLocaleTimeString('vi-VN') + ' ' + activeSession.entryAt.toLocaleDateString('vi-VN'),
+                        exitTime: activeSession.exitAt.toLocaleTimeString('vi-VN') + ' ' + activeSession.exitAt.toLocaleDateString('vi-VN'),
+                        fee: amount,
+                        paymentStatus: 'paid'
+                    })
+                } catch (updateErr) {
+                    console.error('[SePay Webhook] Không thể cập nhật thông tin quét lên AI server:', updateErr.message)
+                }
+
+                // Reset in-memory session của cổng ra về idle để đóng phiên
+                const sessions = getSessions()
+                if (sessions && sessions.out) {
+                    if (sessions.out.timer) clearTimeout(sessions.out.timer)
+                    sessions.out.status = 'done'
+                }
+
                 return respondSuccess(res)
             }
         }
