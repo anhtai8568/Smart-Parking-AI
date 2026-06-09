@@ -1,5 +1,4 @@
-import { getMQTTClient } from '../config/mqtt.js'
-import { addPlateToSession, getSessions } from '../config/mqtt.js'
+import { getMQTTClient, getSessions, addPlateToSession, getLatestSwipedRfid } from '../config/mqtt.js'
 import ParkingSession from '../../models/parkingsession.js'
 import Vehicle from '../../models/vehicle.js'
 
@@ -241,4 +240,10 @@ export async function getSessionsStatus(req, res) {
         }
     }
     return res.json({ status: 'success', data: sanitized })
+}
+
+// Lấy thông tin thẻ RFID vừa quẹt mới nhất (dùng cho việc gán thẻ khi đăng ký vé tháng)
+export async function getLatestRfid(req, res) {
+    const latest = getLatestSwipedRfid()
+    return res.json({ status: 'success', data: latest })
 }
