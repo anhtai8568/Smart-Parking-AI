@@ -55,8 +55,12 @@ bool dangChoXeRa        = false;
 bool xeDaVaoTrong       = false;
 bool xeDaRaNgoai        = false;
 
+bool gateIsOpen         = false;
+unsigned long t_close_in = 0;
+unsigned long t_close_out = 0;
+
 // ===== DEBOUNCE CẢM BIẾN =====
-const unsigned long DEBOUNCE_MS = 2000;
+const unsigned long DEBOUNCE_MS = 6000;
 unsigned long lastSeenD1        = 0;
 unsigned long lastSeenD2        = 0;
 
@@ -95,51 +99,58 @@ float getDistance(int trig, int echo) {
 void openBarrier() {
   LOGLN("[BARRIER] Mo!");
   myServo.write(90);
+  gateIsOpen = true;
+  xeDaVaoTrong = false;
+  xeDaRaNgoai = false;
+  t_close_in = 0;
+  t_close_out = 0;
 }
 
 void closeBarrier() {
   LOGLN("[BARRIER] Dong tu tu...");
-  for (int pos = 90; pos >= 0; pos--) {
+  for (int pos = 90; pos >= 0; pos -= 5) {
     myServo.write(pos);
-    delay(8); // 90 steps * 8ms = 720ms total close time (hạ từ từ nhưng nhanh hơn)
+    delay(20); // 18 steps * 20ms = 360ms (đồng bộ chu kỳ xung của servo, tránh rung lắc)
   }
+  myServo.write(0); // Đảm bảo đóng hoàn toàn ở góc 0
+  gateIsOpen = false;
 }
+
+// ===== COOLDOWN QUẸT THẺ =====
+unsigned long lastRfidSwipeTime = 0;
+const unsigned long RFID_COOLDOWN_MS = 3000;
 
 // ===== XỬ LÝ THẺ RFID =====
 void handleRFID(const String& cardID) {
-  if (!enableScanID) {
-    // Không in heartbeat RFID_RAW liên tục — chỉ in khi có thẻ thực sự
-    LOGLN("[RFID RAW] " + cardID);
-    return;
+  unsigned long now = millis();
+  if (now - lastRfidSwipeTime < RFID_COOLDOWN_MS) {
+    return; // Đang trong thời gian chờ, bỏ qua đọc trùng
   }
 
   if (xeDangVao) {
+    lastRfidSwipeTime = now;
     LOG("[RFID VAO] ID: "); LOGLN(cardID);
-    if (soChoTrong > 0) {
-      rfidUid      = cardID;
-      enableScanID = false;
+    if (soChoTrong > 0 || soChoTrong == -1) {
       dangChoXeVao = true;
       xeDaVaoTrong = false;
-      openBarrier();
       client.publish("parking/events/gate/in", cardID.c_str());
-      LOG("[RFID VAO] OK. Luu UID: "); LOGLN(rfidUid);
     } else {
       LOGLN("[RFID VAO] Het cho! Khong mo.");
     }
   } else if (xeDangRa) {
+    lastRfidSwipeTime = now;
     LOG("[RFID RA] ID: "); LOGLN(cardID);
-    if (cardID == rfidUid) {
-      LOGLN("[RFID RA] The khop. Mo cong.");
-      enableScanID = false;
-      dangChoXeRa  = true;
-      xeDaRaNgoai  = false;
-      rfidUid      = "";
-      openBarrier();
-      client.publish("parking/events/gate/out", cardID.c_str());
-    } else {
-      LOG("[RFID RA] KHONG KHOP! Nhan="); LOG(cardID);
-      LOG(" Luu="); LOGLN(rfidUid);
-    }
+    dangChoXeRa  = true;
+    xeDaRaNgoai  = false;
+    client.publish("parking/events/gate/out", cardID.c_str());
+  } else {
+    // Không có xe ở cổng nào cả -> Gửi lên cổng vào làm mặc định (hỗ trợ test & dự phòng khi hỏng cảm biến)
+    lastRfidSwipeTime = now;
+    LOG("[RFID RAW] ID: "); LOGLN(cardID);
+    LOGLN("[RFID RAW] Gui tin hieu len cong VAO de xu ly.");
+    dangChoXeVao = true;
+    xeDaVaoTrong = false;
+    client.publish("parking/events/gate/in", cardID.c_str());
   }
 }
 
@@ -183,7 +194,7 @@ void handleSensors(float d1, float d2) {
   unsigned long now = millis();
 
   // -- CỔNG VÀO (sensor 1) --
-  if (d1 > 0 && d1 < 10) {
+  if (d1 > 0 && d1 < 18) {
     lastSeenD1 = now;
     if (!xeDangVao) {
       LOGLN("[SENSOR1] Xe den cong vao.");
@@ -198,7 +209,7 @@ void handleSensors(float d1, float d2) {
   }
 
   // -- CỔNG RA (sensor 2) --
-  if (d2 > 0 && d2 < 10) {
+  if (d2 > 0 && d2 < 18) {
     lastSeenD2 = now;
     if (!xeDangRa) {
       LOGLN("[SENSOR2] Xe den cong ra.");
@@ -213,32 +224,36 @@ void handleSensors(float d1, float d2) {
   }
 
   // -- TỰ ĐÓNG BARRIER (xe vào đi qua sensor trong) --
-  if (dangChoXeVao) {
-    if (d2 > 0 && d2 < 10)  xeDaVaoTrong = true;
-    if (xeDaVaoTrong && (d2 > 15 || d2 == -1)) {
-      static unsigned long t = 0;
-      if (t == 0) t = now;
-      if (now - t >= 1000) {
+  if (dangChoXeVao && gateIsOpen) {
+    if (d2 > 0 && d2 < 18) {
+      xeDaVaoTrong = true;
+      t_close_in = 0; // Reset timer nếu xe vẫn đang chắn cảm biến
+    }
+    if (xeDaVaoTrong && (d2 > 23 || d2 == -1)) {
+      if (t_close_in == 0) t_close_in = now;
+      if (now - t_close_in >= 1500) { // 1.5 giây để đuôi xe đi qua hẳn
         closeBarrier();
         xeDaVaoTrong = false;
         dangChoXeVao = false;
-        t = 0;
+        t_close_in = 0;
         LOGLN("[BARRIER] Tu dong dong (xe da vao).");
       }
     }
   }
 
   // -- TỰ ĐÓNG BARRIER (xe ra đi qua sensor ngoài) --
-  if (dangChoXeRa) {
-    if (d1 > 0 && d1 < 10)  xeDaRaNgoai = true;
-    if (xeDaRaNgoai && (d1 > 15 || d1 == -1)) {
-      static unsigned long t = 0;
-      if (t == 0) t = now;
-      if (now - t >= 1000) {
+  if (dangChoXeRa && gateIsOpen) {
+    if (d1 > 0 && d1 < 18) {
+      xeDaRaNgoai = true;
+      t_close_out = 0; // Reset timer nếu xe vẫn đang chắn cảm biến
+    }
+    if (xeDaRaNgoai && (d1 > 23 || d1 == -1)) {
+      if (t_close_out == 0) t_close_out = now;
+      if (now - t_close_out >= 1500) { // 1.5 giây để đuôi xe đi qua hẳn
         closeBarrier();
         xeDaRaNgoai = false;
         dangChoXeRa = false;
-        t = 0;
+        t_close_out = 0;
         LOGLN("[BARRIER] Tu dong dong (xe da ra).");
       }
     }

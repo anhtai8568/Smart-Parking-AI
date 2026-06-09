@@ -4,7 +4,7 @@ import api from '../../services/api'
 
 const AI_URL = 'http://localhost:8000'
 
-const EMPTY_SCAN = { plate: null, apriltag: null, image_b64: null, timestamp: null }
+const EMPTY_SCAN = { plate: null, apriltag: null, image_b64: null, timestamp: null, rfid: null }
 
 // Phát tiếng beep cảnh báo qua Web Audio API
 function playAlertBeep() {
@@ -57,23 +57,25 @@ function DashboardGuard() {
         const isNewScanIn  = newIn.timestamp  !== prevScanIn.current.timestamp
         const isNewScanOut = newOut.timestamp !== prevScanOut.current.timestamp
 
-        if (isNewScanIn && newIn.image_b64 && !newIn.plate) {
-          // Scan cổng vào: không thấy biển số
+        // Lỗi xảy ra khi có cảnh báo rõ ràng từ backend, hoặc khi đã quẹt thẻ RFID mà vẫn không nhận diện được biển số
+        const hasErrorIn = newIn.warning || (newIn.rfid && !newIn.plate);
+        const hasErrorOut = newOut.warning || (newOut.rfid && !newOut.plate);
+
+        if (isNewScanIn && hasErrorIn) {
           setNoPlateAlert('in')
           playAlertBeep()
           clearTimeout(alertTimer.current)
           alertTimer.current = setTimeout(() => setNoPlateAlert(null), 12000)
-        } else if (isNewScanIn && newIn.plate) {
-          // Biển số đã nhận diện được → xóa cảnh báo
+        } else if (isNewScanIn && newIn.plate && !newIn.warning) {
           setNoPlateAlert(null)
         }
 
-        if (isNewScanOut && newOut.image_b64 && !newOut.plate) {
+        if (isNewScanOut && hasErrorOut) {
           setNoPlateAlert('out')
           playAlertBeep()
           clearTimeout(alertTimer.current)
           alertTimer.current = setTimeout(() => setNoPlateAlert(null), 12000)
-        } else if (isNewScanOut && newOut.plate) {
+        } else if (isNewScanOut && newOut.plate && !newOut.warning) {
           setNoPlateAlert(null)
         }
 
@@ -234,16 +236,19 @@ function DashboardGuard() {
             <span className="match-badge success">Chế độ: Tự động</span>
           </div>
 
-          {/* ── CẢNH BÁO: Không nhận diện được biển số ── */}
+          {/* ── CẢNH BÁO: Lỗi xác thực hoặc không nhận diện được biển số ── */}
           {noPlateAlert && (
             <div className="no-plate-alert">
               <div className="no-plate-alert-icon">⚠️</div>
               <div className="no-plate-alert-body">
                 <div className="no-plate-alert-title">
-                  Không nhận diện được biển số xe {noPlateAlert === 'in' ? 'vào' : 'ra'}!
+                  {noPlateAlert === 'in' ? 'Cảnh báo cổng vào!' : 'Cảnh báo cổng ra!'}
                 </div>
                 <div className="no-plate-alert-msg">
-                  Vui lòng nhắc người dùng <strong>điều chỉnh xe vào đúng khung hình camera</strong> hoặc giơ biển số xe lên trước ống kính.
+                  {noPlateAlert === 'in' 
+                    ? (scanIn.warning || 'Không nhận diện được biển số xe vào! Vui lòng nhắc người dùng điều chỉnh xe vào đúng khung hình camera hoặc giơ biển số xe lên trước ống kính.')
+                    : (scanOut.warning || 'Không nhận diện được biển số xe ra! Vui lòng nhắc người dùng điều chỉnh xe vào đúng khung hình camera hoặc giơ biển số xe lên trước ống kính.')
+                  }
                 </div>
               </div>
               <button
@@ -305,41 +310,76 @@ function DashboardGuard() {
                   </div>
                 )}
 
-                <div className="info-row">
-                  <span>Trạng thái</span>
-                  <strong style={{ color: scanIn.warning ? '#dc2626' : '#16a34a' }}>
-                    {scanIn.warning ? '⚠️ Lỗi' : (scanIn.plate ? '🚗 Đã nhận diện' : '⏳ Chờ xe vào')}
-                  </strong>
-                </div>
+                {/* CỔNG VÀO SECTION */}
+                <div className="gate-info-section" style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '12px', marginBottom: '12px' }}>
+                  <div style={{ fontWeight: 700, color: '#1d4ed8', marginBottom: '8px', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>📥 CỔNG VÀO</span>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: scanIn.warning ? '#dc2626' : (scanIn.plate ? '#16a34a' : '#94a3b8') }}>
+                      {scanIn.warning ? 'LỖI' : (scanIn.plate ? 'ĐÃ NHẬN DIỆN' : 'CHỜ XE')}
+                    </span>
+                  </div>
+                  
+                  <div className="info-row">
+                    <span>Mã thẻ RFID vào</span>
+                    <strong style={{ color: scanIn.rfid ? '#1d4ed8' : '#64748b' }}>
+                      {scanIn.rfid || '—'}
+                    </strong>
+                  </div>
 
-                {scanIn.plate && (
                   <div className="info-row">
                     <span>Biển số vào</span>
-                    <strong>{scanIn.plate}</strong>
+                    <strong style={{ color: scanIn.plate ? '#0f172a' : '#64748b' }}>
+                      {scanIn.plate || '—'}
+                    </strong>
                   </div>
-                )}
 
-                {scanIn.apriltag != null && (
+                  {scanIn.apriltag != null && (
+                    <div className="info-row">
+                      <span>AprilTag ID</span>
+                      <strong>#{scanIn.apriltag}</strong>
+                    </div>
+                  )}
+
                   <div className="info-row">
-                    <span>AprilTag ID</span>
-                    <strong>#{scanIn.apriltag}</strong>
+                    <span>Giờ vào</span>
+                    <strong>{scanIn.timestamp || '—'}</strong>
                   </div>
-                )}
+                </div>
 
-                {scanOut.plate && (
+                {/* CỔNG RA SECTION */}
+                <div className="gate-info-section" style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '12px', marginBottom: '12px' }}>
+                  <div style={{ fontWeight: 700, color: '#047857', marginBottom: '8px', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>📤 CỔNG RA</span>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: scanOut.warning ? '#dc2626' : (scanOut.plate ? '#16a34a' : '#94a3b8') }}>
+                      {scanOut.warning ? 'LỖI' : (scanOut.plate ? 'ĐÃ NHẬN DIỆN' : 'CHỜ XE')}
+                    </span>
+                  </div>
+
+                  <div className="info-row">
+                    <span>Mã thẻ RFID ra</span>
+                    <strong style={{ color: scanOut.rfid ? '#047857' : '#64748b' }}>
+                      {scanOut.rfid || '—'}
+                    </strong>
+                  </div>
+
                   <div className="info-row">
                     <span>Biển số ra</span>
-                    <strong>{scanOut.plate}</strong>
+                    <strong style={{ color: scanOut.plate ? '#0f172a' : '#64748b' }}>
+                      {scanOut.plate || '—'}
+                    </strong>
                   </div>
-                )}
 
-                <div className="info-row">
-                  <span>Giờ vào</span>
-                  <strong>{scanIn.timestamp  || '—'}</strong>
-                </div>
-                <div className="info-row">
-                  <span>Giờ ra</span>
-                  <strong>{scanOut.timestamp || '—'}</strong>
+                  {scanOut.apriltag != null && (
+                    <div className="info-row">
+                      <span>AprilTag ID</span>
+                      <strong>#{scanOut.apriltag}</strong>
+                    </div>
+                  )}
+
+                  <div className="info-row">
+                    <span>Giờ ra</span>
+                    <strong>{scanOut.timestamp || '—'}</strong>
+                  </div>
                 </div>
 
                 {/* ── Điều khiển barrier ── */}

@@ -39,12 +39,17 @@ class CharacterRecognizer:
             detected_chars.append({'name': char_name, 'x': float(cx), 'y': float(cy)})
 
         total_chars = len(detected_chars)
+        raw_names = "".join([c['name'] for c in sorted(detected_chars, key=lambda x: x['x'])])
+        
+        # In log ra terminal để debug
+        print(f"[OCR] Tim thay {total_chars} ky tu: '{raw_names}'")
 
         # ---------------------------------------------------------
         # 1. BỘ LỌC ĐỘ DÀI (VALIDATION)
         # Chỉ chấp nhận biển số có đúng 8 ký tự (ô tô) hoặc 9 ký tự (xe máy)
         # ---------------------------------------------------------
         if total_chars not in [8, 9]:
+            print(f"[OCR] Loai bo bien so '{raw_names}' do khong duoc 8 hoac 9 ky tu (so ky tu: {total_chars})")
             return "" # Trả về rỗng để giao diện Web tiếp tục quét khung hình khác
 
         final_text = ""
@@ -80,7 +85,7 @@ class CharacterRecognizer:
             text_row2 = "".join([self.num_map.get(c['name'], c['name']) for c in row2])
             
             final_text = text_row1 + text_row2
-
+ 
         # ---------------------------------------------------------
         # 3. LOGIC CHO BIỂN DÀI (1 DÒNG: Ô TÔ)
         # ---------------------------------------------------------
@@ -94,5 +99,6 @@ class CharacterRecognizer:
                     final_text += self.char_map.get(c['name'], c['name']) # Ép ra CHỮ
                 else:
                     final_text += self.num_map.get(c['name'], c['name'])  # Ép ra SỐ
-
+ 
+        print(f"[OCR] Dich thanh cong bien so: '{final_text}'")
         return final_text

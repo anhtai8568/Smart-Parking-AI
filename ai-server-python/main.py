@@ -10,7 +10,7 @@ import time
 # Import 2 module bạn vừa tạo
 from utils.detect_license import PlateDetector
 from utils.character import CharacterRecognizer
-from models.aruco_gene import generate_aruco_image, get_aruco_id_from_license_plate
+from models.apriltag_gene import generate_aruco_image, get_aruco_id_from_license_plate
 from io import BytesIO
 
 app = FastAPI(title="ParkVision AI API")
@@ -30,25 +30,30 @@ detector = PlateDetector("models/detect_license.pt")
 recognizer = CharacterRecognizer("models/char.pt")
 print("[OK] He thong da san sang!")
 
+import urllib.request
+import json
+
+def trigger_backend_validation(gate, rfid):
+    try:
+        url = "http://localhost:4000/api/gate/reprocess"
+        data = json.dumps({"gate": gate, "rfid": rfid}).encode('utf-8')
+        req = urllib.request.Request(
+            url, 
+            data=data, 
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=2.0) as response:
+            response.read()
+            print(f"[trigger_backend_validation] Reprocessed card {rfid} for gate {gate} successfully.")
+    except Exception as e:
+        print(f"[trigger_backend_validation] Error: {e}")
+
 import threading
 
 # Khởi tạo camera mặc định (0 = webcam laptop)
 camera = cv2.VideoCapture(0)
-latest_frame = None
-latest_frame_lock = threading.Lock()
-
-def camera_reader_loop():
-    global latest_frame
-    while True:
-        success, frame = camera.read()
-        if success:
-            with latest_frame_lock:
-                latest_frame = frame
-        time.sleep(0.01)
-
-# Khởi động luồng đọc camera ngầm để tránh xung đột luồng
-reader_thread = threading.Thread(target=camera_reader_loop, daemon=True)
-reader_thread.start()
+camera_lock = threading.Lock()
 
 # Throttle nhận diện để đỡ nặng (mỗi N frame xử lý 1 lần)
 FRAME_SKIP = 6
@@ -63,22 +68,24 @@ plate_lost_counter = 0
 # ===== SCAN RESULT CACHE =====
 # Lưu kết quả nhận diện mới nhất của cổng vào và cổng ra
 last_scan = {
-    "in":  {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None},
-    "out": {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None},
+    "in":  {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None},
+    "out": {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None},
 }
+
+# Theo dõi cổng nào đang hoạt động để tránh ghi đè nhận diện lên cả hai cổng
+active_gate = "in"
 
 def generate_frames():
     global frame_count, last_plate_text
-    global current_plate_text, current_plate_b64, plate_lost_counter
+    global current_plate_text, current_plate_b64, plate_lost_counter, active_gate
+
+    last_bboxes = []
+    last_ocr_time = 0
 
     while True:
-        with latest_frame_lock:
-            if latest_frame is None:
-                frame = None
-            else:
-                frame = latest_frame.copy()
-
-        if frame is None:
+        with camera_lock:
+            success, frame = camera.read()
+        if not success:
             time.sleep(0.03)
             continue
 
@@ -87,36 +94,53 @@ def generate_frames():
             try:
                 plates = detector.detect_and_crop(frame)
                 if plates:
+                    last_bboxes = [p["bbox"] for p in plates]
                     plate_lost_counter = 0
-                    if current_plate_text is None:
-                        # Phát hiện biển số lần đầu -> Chụp lại hình và nhận diện
+                    print(f"[YOLO Stage 1] Phat hien {len(plates)} bien so trong khung hinh.")
+                    
+                    # Giãn cách chạy OCR tối thiểu 1.0 giây để tránh giật lag camera stream
+                    now_time = time.time()
+                    if current_plate_text is None and (now_time - last_ocr_time > 1.0):
+                        last_ocr_time = now_time
                         plate_img = plates[0]["image"]
                         plate_text = recognizer.process_plate(plate_img)
                         if plate_text:
                             current_plate_text = plate_text
                             last_plate_text = plate_text
+                            print(f"[YOLO Stage 2] Nhan dien va dich bien so tu dong: '{plate_text}'")
                             
                             # Encode ảnh biển số sang base64
                             _, buf = cv2.imencode(".jpg", plate_img)
                             current_plate_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
                             
-                            # Tự động hiển thị trên khung biển số của web ngay lập tức
-                            for gate in ["in", "out"]:
-                                # Chỉ ghi đè nếu chưa có cảnh báo lỗi và chưa được khóa bởi sensor
-                                last_scan[gate] = {
-                                    "plate": current_plate_text,
-                                    "apriltag": None,
-                                    "image_b64": current_plate_b64,
-                                    "timestamp": time.strftime("%H:%M %d/%m/%Y"),
-                                    "warning": None,
-                                }
+                            # Tự động hiển thị trên khung biển số của web ngay lập tức cho cổng đang hoạt động
+                            gate = active_gate
+                            if gate in ["in", "out"]:
+                                last_scan[gate]["plate"] = current_plate_text
+                                last_scan[gate]["image_b64"] = current_plate_b64
+                                last_scan[gate]["timestamp"] = time.strftime("%H:%M %d/%m/%Y")
+                                last_scan[gate]["warning"] = None  # Xóa cảnh báo cũ vì đã có biển số
+                                
+                                # Nếu đã có rfid trong cache (quẹt thẻ trước khi nhận diện được biển số), tự động gọi backend reprocess
+                                rfid = last_scan[gate].get("rfid")
+                                if rfid:
+                                    threading.Thread(target=trigger_backend_validation, args=(gate, rfid)).start()
                 else:
+                    last_bboxes = []
                     plate_lost_counter += 1
                     if plate_lost_counter > 15:  # Không thấy biển trong ~15 lần check (~3 giây)
                         current_plate_text = None
                         current_plate_b64 = None
             except Exception as e:
                 print(f"[generate_frames] Error: {e}")
+
+        # Vẽ khung màu xanh lá cây xung quanh biển số xe trên mọi frame
+        for bbox in last_bboxes:
+            try:
+                x1, y1, x2, y2 = bbox
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            except Exception:
+                pass
 
         if last_plate_text:
             cv2.rectangle(frame, (10, 10), (360, 60), (0, 0, 0), -1)
@@ -219,44 +243,95 @@ async def capture_and_scan(gate: str = "in"):
     Chụp frame hiện tại từ webcam, nhận diện biển số xe và AprilTag.
     Gọi khi cảm biến siêu âm kích hoạt (gate='in' hoặc gate='out').
     """
-    global current_plate_text, current_plate_b64
+    global current_plate_text, current_plate_b64, active_gate
+    
+    if gate in ("in", "out"):
+        active_gate = gate
     
     if gate not in ("in", "out"):
         return {"status": "error", "message": "gate phải là 'in' hoặc 'out'"}
 
+    existing_rfid = last_scan[gate].get("rfid")
+
+    # Xóa cache của cổng đối diện vì xe đang ở cổng này
+    other_gate = "out" if gate == "in" else "in"
+    last_scan[other_gate] = {
+        "plate": None,
+        "apriltag": None,
+        "image_b64": None,
+        "timestamp": None,
+        "warning": None,
+        "rfid": None,
+    }
+
+    # Reset cache của cổng hiện tại để đón nhận diện mới (tránh kẹt hình ảnh/biển số của giao dịch trước)
+    last_scan[gate] = {
+        "plate": None,
+        "apriltag": None,
+        "image_b64": None,
+        "timestamp": time.strftime("%H:%M %d/%m/%Y"),
+        "warning": None,
+        "rfid": existing_rfid,
+    }
+
+    # 1. Nếu livestream đang nhìn thấy biển số trực tiếp, sử dụng luôn để phản hồi nhanh
+    if current_plate_text is not None:
+        print(f"[capture-and-scan] Tai su dung bien so tu dong nhan dien tu livestream: {current_plate_text}")
+        last_scan[gate]["plate"] = current_plate_text
+        last_scan[gate]["image_b64"] = current_plate_b64
+        
+        # Quét nhanh AprilTag từ camera hiện tại phòng trường hợp là xe tháng ô tô
+        apriltag_id = None
+        with camera_lock:
+            success, frame = camera.read()
+        if success:
+            try:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                aruco_dict   = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+                aruco_params = cv2.aruco.DetectorParameters()
+                detector_ar  = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
+                corners, ids, _ = detector_ar.detectMarkers(gray)
+                if ids is not None and len(ids) > 0:
+                    apriltag_id = int(ids[0][0])
+                    last_scan[gate]["apriltag"] = apriltag_id
+            except Exception:
+                pass
+                
+        return {
+            "status": "success",
+            "gate": gate,
+            "data": last_scan[gate],
+        }
+
+    # 2. Nếu chưa có biển số, tiến hành chụp và nhận dạng nhanh (chỉ thử 1 frame duy nhất, không sleep, không loop)
     plate_text  = None
     apriltag_id = None
     plate_b64   = None
     frame_b64   = None
     best_frame  = None
 
-    # 1. Đợi khoảng 0.8 giây để xe dừng hẳn và lọt hẳn biển vào khung hình.
-    time.sleep(0.8)
-
-    # 2. Thử lấy và quét từ latest_frame trong tối đa 15 lần (mỗi lần cách nhau 100ms ~1.5s)
-    for i in range(15):
-        with latest_frame_lock:
-            frame = latest_frame.copy() if latest_frame is not None else None
-            
-        if frame is None:
-            time.sleep(0.1)
-            continue
-            
+    with camera_lock:
+        success, frame = camera.read()
+    if success:
         best_frame = frame
         try:
             plates = detector.detect_and_crop(frame)
             if plates:
+                print(f"[capture-and-scan] Single frame - Phat hien {len(plates)} bien so xe.")
                 plate_img  = plates[0]["image"]
                 plate_text = recognizer.process_plate(plate_img)
                 if plate_text:
+                    print(f"[capture-and-scan] Single frame - Doc duoc bien so: '{plate_text}'")
                     _, buf = cv2.imencode(".jpg", plate_img)
                     plate_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
-                    break
+                else:
+                    print(f"[capture-and-scan] Single frame - Phat hien bien so nhung OCR khong thanh cong.")
+            else:
+                print(f"[capture-and-scan] Single frame - Khong phat hien thay bien so xe nao.")
         except Exception as e:
-            print(f"[capture-and-scan] Error frame {i}: {e}")
-        time.sleep(0.1)
+            print(f"[capture-and-scan] Error single frame scan: {e}")
 
-    # 3. Quét AprilTag từ best_frame
+    # Quét AprilTag từ best_frame
     if best_frame is not None:
         try:
             gray = cv2.cvtColor(best_frame, cv2.COLOR_BGR2GRAY)
@@ -273,16 +348,13 @@ async def capture_and_scan(gate: str = "in"):
         _, frame_buf = cv2.imencode(".jpg", best_frame)
         frame_b64 = "data:image/jpeg;base64," + base64.b64encode(frame_buf.tobytes()).decode()
 
-    warning_msg = None
-    if not plate_text:
-        warning_msg = "Không nhận diện được biển số xe!"
-
     result = {
         "plate":      plate_text,
         "apriltag":   apriltag_id,
         "image_b64":  plate_b64 or frame_b64,
         "timestamp":  time.strftime("%H:%M %d/%m/%Y"),
-        "warning":    warning_msg,
+        "warning":    None,
+        "rfid":       existing_rfid,
     }
     last_scan[gate] = result
 
@@ -297,16 +369,17 @@ async def clear_scan(payload: dict = None):
     """
     Reset kết quả quét của cổng (in/out/all) về giá trị trống.
     """
-    global current_plate_text, current_plate_b64
+    global current_plate_text, current_plate_b64, active_gate
     current_plate_text = None
     current_plate_b64 = None
+    active_gate = "in"  # Reset về cổng vào mặc định
     
     gate = payload.get("gate") if payload else None
     if gate in last_scan:
-        last_scan[gate] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None}
+        last_scan[gate] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None}
     else:
-        last_scan["in"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None}
-        last_scan["out"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None}
+        last_scan["in"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None}
+        last_scan["out"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None}
     return {"status": "success", "message": "Đã reset kết quả quét."}
 
 
@@ -325,12 +398,28 @@ async def get_latest_scan():
 @app.post("/api/update-scan-warning")
 async def update_scan_warning(payload: dict):
     """
-    Cập nhật cảnh báo nhận diện/mismatch từ Node.js backend.
+    Cập nhật cảnh báo nhận diện/mismatch hoặc thông tin rfid từ Node.js backend.
+    Hỗ trợ thêm giả lập biển số xe và hình ảnh để kiểm thử.
     """
     gate = payload.get("gate", "in")
     warning = payload.get("warning", None)
+    rfid = payload.get("rfid", None)
+    plate = payload.get("plate", None)
+    image_b64 = payload.get("image_b64", None)
+    timestamp = payload.get("timestamp", None)
+    
     if gate in last_scan:
-        last_scan[gate]["warning"] = warning
+        if warning is not None or "warning" in payload:
+            last_scan[gate]["warning"] = warning
+        if rfid is not None or "rfid" in payload:
+            last_scan[gate]["rfid"] = rfid
+        if plate is not None or "plate" in payload:
+            last_scan[gate]["plate"] = plate
+        if image_b64 is not None or "image_b64" in payload:
+            last_scan[gate]["image_b64"] = image_b64
+        if timestamp is not None or "timestamp" in payload:
+            last_scan[gate]["timestamp"] = timestamp
+            
     return {"status": "success", "message": "Cập nhật cảnh báo thành công"}
 
 

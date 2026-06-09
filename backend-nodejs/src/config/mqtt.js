@@ -28,16 +28,191 @@ async function triggerAIScan(gate) {
     }
 }
 
-// Cập nhật cảnh báo nhận diện tới AI Server để hiển thị trên Dashboard Bảo vệ
-async function updateScanWarning(gate, warning) {
+// Cập nhật cảnh báo hoặc mã RFID tới AI Server để hiển thị trên Dashboard Bảo vệ
+async function updateScanInfo(gate, warning, rfid) {
     try {
+        const body = { gate };
+        if (warning !== undefined) body.warning = warning;
+        if (rfid !== undefined) body.rfid = rfid;
+
         await fetch(`${AI_SERVER_URL}/api/update-scan-warning`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ gate, warning }),
+            body: JSON.stringify(body),
         });
     } catch (err) {
-        console.error(`[MQTT] Lỗi khi cập nhật cảnh báo tới AI server (gate=${gate}):`, err.message);
+        console.error(`[MQTT] Lỗi khi cập nhật thông tin quét tới AI server (gate=${gate}):`, err.message);
+    }
+}
+
+async function updateScanWarning(gate, warning) {
+    await updateScanInfo(gate, warning);
+}
+
+export async function processCardSwipe(gate, cardID) {
+    const client = getMQTTClient();
+    if (!client) return;
+
+    // Cập nhật mã thẻ RFID lên AI server ngay lập tức để giao diện hiển thị
+    await updateScanInfo(gate, null, cardID);
+    
+    let aiData = null;
+    try {
+        let res  = await fetch(`${AI_SERVER_URL}/api/latest-scan`);
+        let json = await res.json();
+        aiData = json.data?.[gate];
+        
+        // Nếu chưa có biển số trong cache, tiến hành quét camera chủ động ngay lúc quẹt thẻ
+        if (!aiData?.plate) {
+            console.log(`[MQTT ${gate}] Chưa có biển số trong cache, tiến hành quét camera chủ động...`);
+            const scanRes = await fetch(`${AI_SERVER_URL}/api/capture-and-scan?gate=${gate}`, { method: 'POST' });
+            const scanJson = await scanRes.json();
+            if (scanJson.status === 'success') {
+                aiData = scanJson.data;
+            }
+        }
+    } catch (err) {
+        console.error(`[MQTT ${gate}] Lỗi khi lấy thông tin quét từ AI server:`, err.message);
+    }
+
+    let shouldOpen = false;
+
+    if (gate === 'in') {
+        // Kiểm tra xem thẻ RFID này có thuộc về xe đăng ký tháng nào không
+        const vehicle = await Vehicle.findOne({ rfidCard: cardID, status: 'active' });
+        if (vehicle) {
+            const subscription = await UserPackage.findOne({ vehicleId: vehicle._id, status: 'active' });
+            if (subscription) {
+                // Xác thực kép (Double Check) cho xe máy / ô tô tháng quẹt thẻ
+                const cleanRegistered = vehicle.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+                const cleanScanned = aiData?.plate ? aiData.plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
+
+                if (cleanRegistered === cleanScanned) {
+                    console.log(`[Double Check] Khớp biển số xe tháng: ${vehicle.licensePlate}. Mở barrier.`);
+                    shouldOpen = true;
+                    
+                    const sessionCode = `PS-IN-${Date.now()}`;
+                    await ParkingSession.create({
+                        sessionCode,
+                        vehicleId: vehicle._id,
+                        userId: subscription.userId,
+                        licensePlate: vehicle.licensePlate,
+                        vehicleType: vehicle.vehicleType,
+                        entryAt: new Date(),
+                        entryMethod: 'rfid',
+                        isVisitor: false,
+                        status: 'in_progress',
+                        notes: `RFID: ${cardID}`,
+                    });
+                } else {
+                    console.log(`[Double Check Alert] Lệch biển số xe tháng! Đăng ký: ${vehicle.licensePlate}, AI đọc: ${aiData?.plate}`);
+                    await updateScanWarning('in', `Lệch biển số xe tháng! Đăng ký: ${vehicle.licensePlate}, AI đọc: ${aiData?.plate || 'Không thấy'}`);
+                }
+            }
+        } else {
+            // Nếu không phải xe đăng ký tháng -> Xử lý xe vãng lai vào
+            const licensePlate = aiData?.plate;
+            if (licensePlate) {
+                console.log(`[Visitor In] Nhận diện biển xe vãng lai: ${licensePlate}. Mở barrier.`);
+                shouldOpen = true;
+                
+                const sessionCode = `PS-IN-${Date.now()}`;
+                await ParkingSession.create({
+                    sessionCode,
+                    licensePlate,
+                    vehicleType: 'car', // mặc định
+                    entryAt: new Date(),
+                    entryMethod: 'rfid',
+                    isVisitor: true,
+                    status: 'in_progress',
+                    notes: `RFID: ${cardID}`,
+                });
+            } else {
+                console.log(`[Visitor In Alert] Thẻ vãng lai quẹt nhưng không nhận diện được biển số. Giữ rào.`);
+                await updateScanWarning('in', 'Thẻ vãng lai quẹt nhưng không thấy biển số xe!');
+            }
+        }
+    } else {
+        // gate === 'out'
+        // Kiểm tra xem thẻ RFID này có thuộc về xe đăng ký tháng nào không
+        const vehicle = await Vehicle.findOne({ rfidCard: cardID, status: 'active' });
+        if (vehicle) {
+            const subscription = await UserPackage.findOne({ vehicleId: vehicle._id, status: 'active' });
+            if (subscription) {
+                // Xác thực kép (Double Check) lúc ra cho xe tháng
+                const cleanRegistered = vehicle.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+                const cleanScanned = aiData?.plate ? aiData.plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
+
+                if (cleanRegistered === cleanScanned) {
+                    const activeSession = await ParkingSession.findOne({ vehicleId: vehicle._id, status: 'in_progress' });
+                    if (activeSession) {
+                        console.log(`[Double Check] Khớp biển số ra xe tháng: ${vehicle.licensePlate}. Mở barrier.`);
+                        shouldOpen = true;
+                        
+                        activeSession.exitAt = new Date();
+                        activeSession.exitMethod = 'rfid';
+                        activeSession.status = 'completed';
+                        activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
+                        activeSession.feeAmount = 0;
+                        activeSession.paymentStatus = 'paid';
+                        await activeSession.save();
+                    } else {
+                        console.log(`[DB Warning] Xe tháng ${vehicle.licensePlate} quẹt thẻ ra nhưng không thấy lượt vào!`);
+                        await updateScanWarning('out', 'Xe tháng chưa quét lượt vào!');
+                    }
+                } else {
+                    console.log(`[Double Check Alert] Lệch biển số ra xe tháng! Đăng ký: ${vehicle.licensePlate}, AI đọc: ${aiData?.plate}`);
+                    await updateScanWarning('out', `Lệch biển số xe tháng! Đăng ký: ${vehicle.licensePlate}, AI đọc: ${aiData?.plate || 'Không thấy'}`);
+                }
+            }
+        } else {
+            // Xử lý xe vãng lai ra
+            const activeSession = await ParkingSession.findOne({
+                notes: { $regex: cardID },
+                status: 'in_progress'
+            });
+
+            if (activeSession) {
+                const cleanEntry = activeSession.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+                const cleanExit = aiData?.plate ? aiData.plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
+                
+                // Đối khớp nghiêm ngặt: Biển số vào và biển số ra phải tồn tại và khớp nhau
+                if (cleanEntry && cleanExit && cleanEntry === cleanExit) {
+                    console.log(`[Visitor Out] Xác thực kép thành công xe vãng lai. Mở barrier.`);
+                    shouldOpen = true;
+                    
+                    activeSession.exitAt          = new Date();
+                    activeSession.exitMethod      = 'rfid';
+                    activeSession.status          = 'completed';
+                    activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
+                    activeSession.feeAmount       = 10000;
+                    activeSession.paymentStatus   = 'paid';
+                    await activeSession.save();
+                } else {
+                    console.log(`[Visitor Out Alert] Lệch biển số ra! Vào: ${activeSession.licensePlate}, Ra: ${aiData?.plate}`);
+                    await updateScanWarning('out', `Lệch biển số lúc ra! Vào: ${activeSession.licensePlate}, Ra: ${aiData?.plate || 'Không đọc được'}`);
+                }
+            } else {
+                console.log(`[DB Warning] Không tìm thấy lượt vào cho thẻ ${cardID}`);
+                await updateScanWarning('out', 'Thẻ chưa quét lượt vào!');
+            }
+        }
+    }
+
+    if (shouldOpen) {
+        client.publish('parking/commands/gate', 'OPEN');
+        // Tự động dọn dẹp lane sau 5 giây để xe đi qua
+        setTimeout(async () => {
+            try {
+                await fetch(`${AI_SERVER_URL}/api/clear-scan`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ gate }),
+                });
+            } catch (err) {
+                console.error(`[MQTT ${gate}] Lỗi khi dọn dẹp lane:`, err.message);
+            }
+        }, 5000);
     }
 }
 
@@ -157,145 +332,13 @@ export function connectMQTT() {
             // ─── 2. Quẹt thẻ đi vào cổng ───
             else if (topic === 'parking/events/gate/in') {
                 const cardID = payload;
-                let aiData = null;
-                try {
-                    const res  = await fetch(`${AI_SERVER_URL}/api/latest-scan`);
-                    const json = await res.json();
-                    aiData = json.data?.in;
-                } catch (_) {}
-
-                // Kiểm tra xem thẻ RFID này có thuộc về xe đăng ký tháng nào không
-                const vehicle = await Vehicle.findOne({ rfidCard: cardID, status: 'active' });
-                if (vehicle) {
-                    const subscription = await UserPackage.findOne({ vehicleId: vehicle._id, status: 'active' });
-                    if (subscription) {
-                        // Xác thực kép (Double Check) cho xe máy / ô tô tháng quẹt thẻ
-                        const cleanRegistered = vehicle.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-                        const cleanScanned = aiData?.plate ? aiData.plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
-
-                        if (cleanRegistered === cleanScanned) {
-                            console.log(`[Double Check] Khớp biển số xe tháng: ${vehicle.licensePlate}. Mở barrier.`);
-                            client.publish('parking/commands/gate', 'OPEN');
-                            
-                            const sessionCode = `PS-IN-${Date.now()}`;
-                            await ParkingSession.create({
-                                sessionCode,
-                                vehicleId: vehicle._id,
-                                userId: subscription.userId,
-                                licensePlate: vehicle.licensePlate,
-                                vehicleType: vehicle.vehicleType,
-                                entryAt: new Date(),
-                                entryMethod: 'rfid',
-                                isVisitor: false,
-                                status: 'in_progress',
-                                notes: `RFID Tháng: ${cardID}`,
-                            });
-                        } else {
-                            console.log(`[Double Check Alert] Lệch biển số xe tháng! Đăng ký: ${vehicle.licensePlate}, AI đọc: ${aiData?.plate}`);
-                            await updateScanWarning('in', `Lệch biển số xe tháng! Đăng ký: ${vehicle.licensePlate}, AI đọc: ${aiData?.plate || 'Không thấy'}`);
-                        }
-                        return; // Hoàn thành xử lý xe tháng
-                    }
-                }
-
-                // Nếu không phải xe đăng ký tháng -> Xử lý xe vãng lai vào
-                const licensePlate = aiData?.plate;
-                if (licensePlate) {
-                    console.log(`[Visitor In] Nhận diện biển xe vãng lai: ${licensePlate}. Mở barrier.`);
-                    client.publish('parking/commands/gate', 'OPEN');
-                    
-                    const sessionCode = `PS-IN-${Date.now()}`;
-                    await ParkingSession.create({
-                        sessionCode,
-                        licensePlate,
-                        vehicleType: 'car', // mặc định
-                        entryAt: new Date(),
-                        entryMethod: 'rfid',
-                        isVisitor: true,
-                        status: 'in_progress',
-                        notes: `RFID: ${cardID}`,
-                    });
-                } else {
-                    console.log(`[Visitor In Alert] Thẻ vãng lai quẹt nhưng không nhận diện được biển số. Giữ rào.`);
-                    await updateScanWarning('in', 'Thẻ vãng lai quẹt nhưng không thấy biển số xe!');
-                }
+                await processCardSwipe('in', cardID);
             }
 
             // ─── 3. Quẹt thẻ đi ra cổng ───
             else if (topic === 'parking/events/gate/out') {
                 const cardID = payload;
-                let aiData = null;
-                try {
-                    const res  = await fetch(`${AI_SERVER_URL}/api/latest-scan`);
-                    const json = await res.json();
-                    aiData = json.data?.out;
-                } catch (_) {}
-
-                // Kiểm tra xem thẻ RFID này có thuộc về xe đăng ký tháng nào không
-                const vehicle = await Vehicle.findOne({ rfidCard: cardID, status: 'active' });
-                if (vehicle) {
-                    const subscription = await UserPackage.findOne({ vehicleId: vehicle._id, status: 'active' });
-                    if (subscription) {
-                        // Xác thực kép (Double Check) lúc ra cho xe tháng
-                        const cleanRegistered = vehicle.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-                        const cleanScanned = aiData?.plate ? aiData.plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
-
-                        if (cleanRegistered === cleanScanned) {
-                            const activeSession = await ParkingSession.findOne({ vehicleId: vehicle._id, status: 'in_progress' });
-                            if (activeSession) {
-                                console.log(`[Double Check] Khớp biển số ra xe tháng: ${vehicle.licensePlate}. Mở barrier.`);
-                                client.publish('parking/commands/gate', 'OPEN');
-                                
-                                activeSession.exitAt = new Date();
-                                activeSession.exitMethod = 'rfid';
-                                activeSession.status = 'completed';
-                                activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
-                                activeSession.feeAmount = 0;
-                                activeSession.paymentStatus = 'paid';
-                                await activeSession.save();
-                            }
-                        } else {
-                            console.log(`[Double Check Alert] Lệch biển số ra xe tháng! Đăng ký: ${vehicle.licensePlate}, AI đọc: ${aiData?.plate}`);
-                            await updateScanWarning('out', `Lệch biển số xe tháng! Đăng ký: ${vehicle.licensePlate}, AI đọc: ${aiData?.plate || 'Không thấy'}`);
-                        }
-                        return; // Hoàn thành xử lý xe tháng ra
-                    }
-                }
-
-                // Xử lý xe vãng lai ra
-                const activeSession = await ParkingSession.findOne({
-                    notes: { $regex: cardID },
-                    status: 'in_progress'
-                });
-
-                if (activeSession) {
-                    const cleanEntry = activeSession.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-                    const cleanExit = aiData?.plate ? aiData.plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
-                    
-                    const isPlaceholder = activeSession.licensePlate.startsWith('RFID-');
-                    
-                    if (isPlaceholder || cleanEntry === cleanExit) {
-                        console.log(`[Visitor Out] Xác thực kép thành công xe vãng lai. Mở barrier.`);
-                        client.publish('parking/commands/gate', 'OPEN');
-                        
-                        activeSession.exitAt          = new Date();
-                        activeSession.exitMethod      = 'rfid';
-                        activeSession.status          = 'completed';
-                        activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
-                        activeSession.feeAmount       = 10000;
-                        activeSession.paymentStatus   = 'paid';
-                        if (isPlaceholder && aiData?.plate) {
-                            activeSession.licensePlate = aiData.plate; // cập nhật biển số thực tế lúc ra
-                        }
-                        await activeSession.save();
-                    } else {
-                        console.log(`[Visitor Out Alert] Lệch biển số ra! Vào: ${activeSession.licensePlate}, Ra: ${aiData?.plate}`);
-                        await updateScanWarning('out', `Lệch biển số lúc ra! Vào: ${activeSession.licensePlate}, Ra: ${aiData?.plate || 'Không đọc được'}`);
-                    }
-                } else {
-                    console.log(`[DB Warning] Không tìm thấy lượt vào cho thẻ ${cardID}`);
-                    await updateScanWarning('out', 'Thẻ chưa quét lượt vào!');
-                }
+                await processCardSwipe('out', cardID);
             }
 
             // ─── 4. Cập nhật vị trí đỗ xe ───
