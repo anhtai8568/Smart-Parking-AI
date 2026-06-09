@@ -65,7 +65,7 @@ const userSchema = new mongoose.Schema(
 )
 
 userSchema.index({ username: 1 }, { unique: true })
-userSchema.index({ phone: 1 }, { unique: true, sparse: true })
+userSchema.index({ phone: 1 }, { sparse: true })
 userSchema.index({ email: 1 }, { unique: true, sparse: true })
 userSchema.index({ role: 1, status: 1 })
 

@@ -12,7 +12,8 @@ const port = Number(process.env.PORT || 4000)
 async function startServer() {
     try {
         await connectDatabase()
-        // Đồng bộ index với schema (fix index không có sparse từ phiên bản cũ)
+        // Drop index phone cũ (unique không sparse gây lỗi khi phone=null), rồi recreate đúng
+        try { await User.collection.dropIndex('phone_1') } catch (_) {}
         await User.syncIndexes()
         connectMQTT()
         app.listen(port, () => {
