@@ -599,9 +599,14 @@ async function main() {
         ok(r.status === 200, `Expected 200, got ${r.status}: ${r.data.message}`);
     });
 
-    await test('POST /api/gate/plate-ready thiếu plate → 400', async () => {
+    await test('POST /api/gate/plate-ready thiếu cả plate lẫn apriltag → 400', async () => {
         const r = await req('POST', '/api/gate/plate-ready', { gate: 'in' });
         ok(r.status === 400, `Expected 400, got ${r.status}`);
+    });
+
+    await test('POST /api/gate/plate-ready có apriltag, không cần plate → 200', async () => {
+        const r = await req('POST', '/api/gate/plate-ready', { gate: 'in', apriltag: 42 });
+        ok(r.status === 200, `Expected 200, got ${r.status}: ${r.data?.message}`);
     });
 
     await test('POST /api/gate/plate-ready gate không hợp lệ → 400', async () => {

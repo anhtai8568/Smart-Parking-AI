@@ -101,16 +101,26 @@ livestream_cache = {
 # Theo dõi cổng nào đang hoạt động để tránh ghi đè nhận diện lên cả hai cổng
 active_gate = "in"
 
+# ArUco/AprilTag detector — khởi tạo 1 lần, tái sử dụng trong livestream
+_aruco_dict     = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+_aruco_params   = cv2.aruco.DetectorParameters()
+_aruco_detector = cv2.aruco.ArucoDetector(_aruco_dict, _aruco_params)
+
 def generate_frames():
     global frame_count, last_plate_text, livestream_cache
     global plate_lost_counter, active_gate, camera
 
     current_plate_text = None
     current_plate_b64  = None
+    current_apriltag   = None
 
-    last_bboxes    = []
-    last_ocr_time  = 0
-    plate_notified = False   # True khi đã notify Node.js cho biển số hiện tại, reset khi biển mất
+    last_bboxes      = []
+    last_ocr_time    = 0
+    plate_notified   = False   # True khi đã notify Node.js cho biển số hiện tại, reset khi biển mất
+    tag_notified     = False   # True khi đã notify Node.js cho AprilTag hiện tại
+    tag_lost_counter = 0
+    last_tag_corners = []
+    last_tag_ids     = None
 
     while True:
         with camera_lock:
@@ -166,10 +176,10 @@ def generate_frames():
                                 # Notify Node.js session manager (chỉ 1 lần đầu cho mỗi biển số)
                                 if not plate_notified:
                                     plate_notified = True
-                                    print(f"[livestream] Notify Node.js: gate={gate}, plate={plate_text}")
+                                    print(f"[livestream] Notify Node.js: gate={gate}, plate={plate_text}, apriltag={current_apriltag}")
                                     threading.Thread(
                                         target=notify_plate_ready,
-                                        args=(gate, plate_text, current_plate_b64, None),
+                                        args=(gate, plate_text, current_plate_b64, current_apriltag),
                                         daemon=True
                                     ).start()
                 else:
@@ -180,13 +190,58 @@ def generate_frames():
                         current_plate_b64  = None
                         plate_notified     = False   # Reset để lần phát hiện tiếp sẽ notify lại
             except Exception as e:
-                print(f"[generate_frames] Error: {e}")
+                print(f"[generate_frames] YOLO error: {e}")
+
+            # ── AprilTag — song song với YOLO, không phụ thuộc biển số ──────────
+            try:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                corners, ids, _ = _aruco_detector.detectMarkers(gray)
+                if ids is not None and len(ids) > 0:
+                    new_tag          = int(ids[0][0])
+                    tag_lost_counter = 0
+                    last_tag_corners = corners
+                    last_tag_ids     = ids
+                    gate             = active_gate
+                    if new_tag != current_apriltag:
+                        current_apriltag = new_tag
+                        tag_notified     = False
+                        with scan_lock:
+                            last_scan[gate]["apriltag"] = new_tag
+                        print(f"[livestream] AprilTag #{new_tag} detected on gate={gate}")
+                    # Notify Node.js ngay khi phát hiện tag mới (kể cả chưa có biển số)
+                    if not tag_notified:
+                        tag_notified = True
+                        threading.Thread(
+                            target=notify_plate_ready,
+                            args=(gate, current_plate_text or '', current_plate_b64, new_tag),
+                            daemon=True
+                        ).start()
+                else:
+                    last_tag_corners = []
+                    last_tag_ids     = None
+                    tag_lost_counter += 1
+                    if tag_lost_counter > 45:  # ~9 giây không thấy tag → xóa cache
+                        if current_apriltag is not None:
+                            current_apriltag = None
+                            tag_notified     = False
+                            gate = active_gate
+                            with scan_lock:
+                                last_scan[gate]["apriltag"] = None
+            except Exception as e:
+                print(f"[generate_frames] AprilTag error: {e}")
 
         # Vẽ khung màu xanh lá cây xung quanh biển số xe trên mọi frame
         for bbox in last_bboxes:
             try:
                 x1, y1, x2, y2 = bbox
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            except Exception:
+                pass
+
+        # Vẽ viền AprilTag marker (màu tím) và ID lên frame
+        if last_tag_corners and last_tag_ids is not None:
+            try:
+                cv2.aruco.drawDetectedMarkers(frame, last_tag_corners, last_tag_ids)
             except Exception:
                 pass
 
@@ -199,6 +254,19 @@ def generate_frames():
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.8,
                 (0, 255, 0),
+                2,
+                cv2.LINE_AA,
+            )
+
+        if current_apriltag is not None:
+            cv2.rectangle(frame, (10, 65), (380, 115), (0, 0, 0), -1)
+            cv2.putText(
+                frame,
+                f"APRILTAG: #{current_apriltag}",
+                (20, 100),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 255, 255),
                 2,
                 cv2.LINE_AA,
             )

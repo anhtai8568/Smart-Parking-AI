@@ -196,10 +196,10 @@ export async function plateReady(req, res) {
     try {
         const { gate, plate, image_b64, apriltag } = req.body
 
-        if (!gate || !plate) {
+        if (!gate || (!plate && apriltag == null)) {
             return res.status(400).json({
                 status: 'error',
-                message: 'Thiếu gate hoặc plate.',
+                message: 'Thiếu gate hoặc plate (hoặc apriltag).',
             })
         }
         if (!['in', 'out'].includes(gate)) {
@@ -209,11 +209,11 @@ export async function plateReady(req, res) {
             })
         }
 
-        addPlateToSession(gate, plate, image_b64 || null, apriltag ?? null)
+        addPlateToSession(gate, plate || null, image_b64 || null, apriltag ?? null)
 
         return res.json({
             status:  'success',
-            message: `Plate '${plate}' received for gate '${gate}'`,
+            message: `Plate '${plate || '(none)'}' apriltag=${apriltag ?? 'none'} received for gate '${gate}'`,
         })
     } catch (error) {
         return res.status(500).json({
