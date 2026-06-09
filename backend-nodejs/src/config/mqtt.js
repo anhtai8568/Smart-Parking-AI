@@ -289,13 +289,16 @@ async function validateAndOpen(gate, session) {
 async function handleEntryValidation(sessionId, rfid, plate, image_b64) {
     const normalizedRfid = String(rfid).trim().toUpperCase();
 
-    // Dọn dẹp session trùng lặp (nếu có xe/thẻ đang ở trạng thái in_progress)
+    // Nếu cùng RFID đang có session in_progress → xe chưa ra, cảm biến không detect được → chuyển sang xử lý lượt RA
     try {
+        const sameRfidSess = await ParkingSession.findOne({ rfid: normalizedRfid, status: 'in_progress' });
+        if (sameRfidSess) {
+            console.log(`[SESSION ${sessionId}] RFID ${normalizedRfid} đang có session in_progress (${sameRfidSess._id}) → cảm biến OUT không detect → chuyển sang handleExitValidation`);
+            return handleExitValidation(sessionId, rfid, plate, image_b64);
+        }
+        // Kiểm tra trùng biển số (khác thẻ RFID)
         const duplicateSess = await ParkingSession.findOne({
-            $or: [
-                { rfid: normalizedRfid },
-                { licensePlate: plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() }
-            ],
+            licensePlate: plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase(),
             status: 'in_progress'
         });
         if (duplicateSess) {
@@ -456,39 +459,44 @@ async function handleExitValidation(sessionId, rfid, plate, image_b64) {
         const cleanEntry = activeSession.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
         const cleanExit  = plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
         const now = new Date();
+        const durationMs      = now - activeSession.entryAt;
+        const durationSeconds = Math.round(durationMs / 1000);
+        const FEE_PER_SECOND  = parseFloat(process.env.FEE_PER_SECOND || '3'); // VND/giây (~10,800đ/giờ)
+        const fee = Math.max(Math.round(durationSeconds * FEE_PER_SECOND), 1000); // tối thiểu 1,000đ
         const entryTimeStr = activeSession.entryAt.toLocaleTimeString('vi-VN') + ' ' + activeSession.entryAt.toLocaleDateString('vi-VN');
-        const exitTimeStr = now.toLocaleTimeString('vi-VN') + ' ' + now.toLocaleDateString('vi-VN');
-        const fee = 10000;
+        const exitTimeStr  = now.toLocaleTimeString('vi-VN') + ' ' + now.toLocaleDateString('vi-VN');
         const qrUrl = buildVietQrUrl({ amount: fee, code: `DX${normalizedRfid}` });
 
         if (cleanEntry === cleanExit) {
-            console.log(`[SESSION ${sessionId}] Visitor OUT matched`);
+            console.log(`[SESSION ${sessionId}] Visitor OUT matched — vào: ${entryTimeStr}, ra: ${exitTimeStr}, thời gian: ${durationSeconds}s, phí: ${fee}đ`);
             activeSession.exitAt          = now;
             activeSession.exitMethod      = 'rfid';
             activeSession.status          = 'completed';
-            activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
+            activeSession.durationMinutes = Math.round(durationMs / 60000);
             activeSession.feeAmount       = fee;
-            activeSession.paymentStatus   = 'paid';
+            activeSession.paymentStatus   = 'unpaid';
             await activeSession.save();
 
-            // Gửi thông tin thành công lên AI server
+            // Gửi thông tin lên AI server để hiển thị trên màn hình bảo vệ
             await updateScanInfo('out', null, normalizedRfid, plate, image_b64, {
                 entryTime: entryTimeStr,
                 exitTime: exitTimeStr,
-                fee: fee,
-                paymentStatus: 'paid',
+                durationSeconds,
+                fee,
+                paymentStatus: 'unpaid',
                 qrUrl
             });
             return true;
           } else {
-              console.log(`[SESSION ${sessionId}] Visitor OUT mismatch: entry=${activeSession.licensePlate}, exit=${plate}`);
+              console.log(`[SESSION ${sessionId}] Visitor OUT mismatch: entry=${activeSession.licensePlate}, exit=${plate} — duration=${durationSeconds}s, fee=${fee}đ`);
               // Lệch biển số xe vãng lai lúc ra: Gửi cảnh báo kèm giờ vào/ra, phí, qrUrl để bảo vệ thấy
               await updateScanInfo('out',
                   `Lệch biển số lúc ra! Vào: ${activeSession.licensePlate}, Ra: ${plate}`,
                   normalizedRfid, plate, image_b64, {
                       entryTime: entryTimeStr,
                       exitTime: exitTimeStr,
-                      fee: fee,
+                      durationSeconds,
+                      fee,
                       paymentStatus: 'unpaid',
                       qrUrl
                   }

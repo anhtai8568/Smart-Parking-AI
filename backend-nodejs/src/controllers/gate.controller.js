@@ -53,12 +53,19 @@ export async function openBarrier(req, res) {
                         status: 'in_progress'
                     });
                     if (activeSession) {
-                        activeSession.exitAt          = new Date();
+                        const exitNow = new Date();
+                        const durationMs = exitNow - activeSession.entryAt;
+                        const durationSeconds = Math.round(durationMs / 1000);
+                        const FEE_PER_SECOND = parseFloat(process.env.FEE_PER_SECOND || '3');
+                        const fee = activeSession.isVisitor
+                            ? Math.max(Math.round(durationSeconds * FEE_PER_SECOND), 1000)
+                            : 0;
+                        activeSession.exitAt          = exitNow;
                         activeSession.exitMethod      = 'manual';
                         activeSession.status          = 'completed';
-                        activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
-                        activeSession.feeAmount       = activeSession.isVisitor ? 10000 : 0;
-                        activeSession.paymentStatus   = 'paid';
+                        activeSession.durationMinutes = Math.round(durationMs / 60000);
+                        activeSession.feeAmount       = fee;
+                        activeSession.paymentStatus   = activeSession.isVisitor ? 'unpaid' : 'waived';
                         if (plate) {
                             activeSession.licensePlate = plate;
                         }
