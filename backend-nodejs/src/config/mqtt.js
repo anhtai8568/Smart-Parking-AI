@@ -95,8 +95,11 @@ function addRfidToSession(gate, cardID) {
     }
 
     const sess = sessions[gate];
-    if (sess.status !== 'collecting') {
+    if (sess.status !== 'collecting' && sess.status !== 'timeout') {
         console.log(`[SESSION ${sess.id}] RFID ignored — status=${sess.status}`);
+        // Cập nhật dashboard ngay cả khi bị bỏ qua để bảo vệ thấy mã thẻ vừa quét
+        updateScanInfo(gate, null, normalizedRfid, sess.plate, sess.image_b64)
+            .catch(e => console.error(`[SESSION ${sess.id}] updateScanInfo(rfid) error:`, e.message));
         return;
     }
 
@@ -108,7 +111,39 @@ function addRfidToSession(gate, cardID) {
     updateScanInfo(gate, null, normalizedRfid, sess.plate, sess.image_b64)
         .catch(e => console.error(`[SESSION ${sess.id}] updateScanInfo(rfid) error:`, e.message));
 
-    tryValidate(gate);
+    // Nếu session đang bị timeout, khôi phục lại để thực hiện validate và mở cổng
+    if (sess.status === 'timeout') {
+        console.log(`[SESSION ${sess.id}] Session recovered from timeout via RFID scan`);
+        sess.status = 'collecting';
+    }
+
+    // Proactive Scan: Nếu chưa có biển số, gọi AI chụp và quét ngay lập tức
+    if (!sess.plate) {
+        console.log(`[SESSION ${sess.id}] RFID swiped but no plate in session — triggering proactive AI scan`);
+        triggerAIScan(gate)
+            .then(aiData => handleAprilTagAutoEntry(gate, aiData))
+            .then(handledByTag => {
+                const updatedSess = sessions[gate];
+                // Lấy lại dữ liệu scan mới nhất từ AI server nếu có
+                const AI_SERVER_URL = process.env.AI_SERVER_URL || 'http://localhost:8000';
+                return fetch(`${AI_SERVER_URL}/api/latest-scan`)
+                    .then(res => res.json())
+                    .then(json => {
+                        const gateData = json.data?.[gate];
+                        if (!handledByTag && gateData && gateData.plate) {
+                            addPlateToSession(gate, gateData.plate, gateData.image_b64, gateData.apriltag);
+                        } else {
+                            tryValidate(gate);
+                        }
+                    });
+            })
+            .catch(scanErr => {
+                console.error(`[SESSION ${sess.id}] Proactive AI scan failed:`, scanErr.message);
+                tryValidate(gate);
+            });
+    } else {
+        tryValidate(gate);
+    }
 }
 
 /**
@@ -122,7 +157,7 @@ export function addPlateToSession(gate, plate, image_b64, apriltag) {
     }
 
     const sess = sessions[gate];
-    if (sess.status !== 'collecting') {
+    if (sess.status !== 'collecting' && sess.status !== 'timeout') {
         console.log(`[SESSION ${sess.id || 'N/A'}] Plate ignored — status=${sess.status}`);
         return;
     }
@@ -136,6 +171,12 @@ export function addPlateToSession(gate, plate, image_b64, apriltag) {
     // Cập nhật dashboard ngay lập tức (fire-and-forget, không block)
     updateScanInfo(gate, null, sess.rfid, plate, image_b64)
         .catch(e => console.error(`[SESSION ${sess.id}] updateScanInfo(plate) error:`, e.message));
+
+    // Nếu session đang bị timeout, khôi phục lại để thực hiện validate và mở cổng
+    if (sess.status === 'timeout') {
+        console.log(`[SESSION ${sess.id}] Session recovered from timeout via plate detection`);
+        sess.status = 'collecting';
+    }
 
     tryValidate(gate);
 }
