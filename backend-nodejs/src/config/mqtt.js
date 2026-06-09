@@ -184,20 +184,31 @@ export function addPlateToSession(gate, plate, image_b64, apriltag) {
         return;
     }
 
-    sess.plate         = plate;
-    sess.image_b64     = image_b64  || null;
+    if (plate)     sess.plate     = plate;          // Không ghi đè plate cũ bằng null
+    if (image_b64) sess.image_b64 = image_b64;
     sess.apriltag      = apriltag != null ? apriltag : sess.apriltag;
     sess.lastUpdatedAt = new Date();
-    console.log(`[SESSION ${sess.id}] Plate received: ${plate}${apriltag != null ? ` | AprilTag: ${apriltag}` : ''}`);
+    console.log(`[SESSION ${sess.id}] Plate received: ${sess.plate || '(none)'}${apriltag != null ? ` | AprilTag: ${apriltag}` : ''}`);
 
     // Cập nhật dashboard ngay lập tức (fire-and-forget, không block)
-    updateScanInfo(gate, null, sess.rfid, plate, image_b64)
+    updateScanInfo(gate, null, sess.rfid, sess.plate, sess.image_b64)
         .catch(e => console.error(`[SESSION ${sess.id}] updateScanInfo(plate) error:`, e.message));
 
     // Nếu session đang bị timeout, khôi phục lại để thực hiện validate và mở cổng
     if (sess.status === 'timeout') {
-        console.log(`[SESSION ${sess.id}] Session recovered from timeout via plate detection`);
+        console.log(`[SESSION ${sess.id}] Session recovered from timeout via plate/apriltag detection`);
         sess.status = 'collecting';
+    }
+
+    // Nếu có AprilTag → thử xác thực xe tháng ô tô ngay (không cần RFID)
+    if (apriltag != null) {
+        handleAprilTagAutoEntry(gate, { ...sess })
+            .then(handled => { if (!handled) tryValidate(gate); })
+            .catch(e => {
+                console.error(`[SESSION ${sess.id}] AprilTag auto-entry error:`, e.message);
+                tryValidate(gate);
+            });
+        return;
     }
 
     tryValidate(gate);
@@ -325,12 +336,14 @@ async function handleEntryValidation(sessionId, rfid, plate, image_b64) {
         const subscription = await UserPackage.findOne({ vehicleId: vehicle._id, status: 'active' });
         if (subscription) {
             const cleanRegistered = vehicle.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-            const cleanScanned    = plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+            const cleanScanned    = plate ? plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
+            const hasMismatch     = cleanScanned && cleanRegistered !== cleanScanned;
 
-            if (cleanRegistered !== cleanScanned) {
-                console.log(`[SESSION ${sessionId}] Monthly IN license plate changed from ${vehicle.licensePlate} to ${plate}. Updating vehicle record...`);
-                vehicle.licensePlate = plate;
-                await vehicle.save();
+            if (hasMismatch) {
+                // Không tự đổi biển — hiển thị cảnh báo lên dashboard bảo vệ
+                const warning = `Biển số nhận diện "${plate}" khác biển đăng ký "${vehicle.licensePlate}". RFID hợp lệ — đã mở barrier.`;
+                console.log(`[SESSION ${sessionId}] Monthly IN plate mismatch: registered=${vehicle.licensePlate}, scanned=${plate}`);
+                updateScanInfo('in', warning, normalizedRfid, plate, image_b64).catch(() => {});
             }
 
             console.log(`[SESSION ${sessionId}] Monthly IN matched: ${vehicle.licensePlate}`);
