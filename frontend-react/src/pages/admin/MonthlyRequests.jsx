@@ -11,6 +11,9 @@ function MonthlyRequests() {
     const [cashConfirmed, setCashConfirmed] = useState({})
     const [isLoading, setIsLoading] = useState(false)
     const [error, setError] = useState('')
+    const [issueModalData, setIssueModalData] = useState(null)
+    const [rfidInput, setRfidInput] = useState('')
+    const [cardDetected, setCardDetected] = useState(false)
 
     const fmt = (value) => `${Number(value || 0).toLocaleString('vi-VN')}đ`
     const fmtDate = (d) => d ? new Date(d).toLocaleDateString('vi-VN') : '—'
@@ -94,23 +97,72 @@ function MonthlyRequests() {
         }
     }
 
-    const handleIssueCard = async (id, isPaid, vehicleType) => {
-        let rfidCard = null
-        if (vehicleType === 'Xe máy') {
-            rfidCard = window.prompt('Vui lòng quét thẻ RFID tháng (hoặc nhập mã UID thẻ):')
-            if (rfidCard === null) return
-            rfidCard = rfidCard.trim()
-            if (!rfidCard) {
-                window.alert('Mã thẻ RFID không được để trống đối với xe máy!')
-                return
+    // Tự động quét thẻ RFID từ cổng khi mở Modal cấp thẻ
+    useEffect(() => {
+        if (!issueModalData) return
+
+        const openedTime = Date.now()
+
+        const interval = setInterval(async () => {
+            try {
+                const res = await api.get('/api/gate/latest-rfid')
+                if (res.data?.status === 'success' && res.data?.data) {
+                    const { rfid, timestamp } = res.data.data
+                    const swipeTime = new Date(timestamp).getTime()
+                    
+                    // Chỉ lấy thẻ quẹt mới sau khi mở modal (hoặc sai lệch không quá 2 giây)
+                    if (swipeTime > openedTime - 2000) {
+                        setRfidInput(rfid)
+                        setCardDetected(true)
+                    }
+                }
+            } catch (e) {
+                console.error('Lỗi khi lấy mã thẻ RFID vừa quẹt:', e.message)
             }
+        }, 1000)
+
+        return () => clearInterval(interval)
+    }, [issueModalData])
+
+    const handleIssueCard = async (id, isPaid, vehicleType, itemUser, itemPlate) => {
+        if (vehicleType === 'Xe máy') {
+            setRfidInput('')
+            setCardDetected(false)
+            setIssueModalData({ id, isPaid, vehicleType, user: itemUser, licensePlate: itemPlate })
+            return
         }
+
         try {
             setIsLoading(true)
             await api.patch(`/api/subscriptions/${id}/issue-card`, {
                 confirmCash: !isPaid,
-                rfidCard,
+                rfidCard: null,
             })
+            await fetchAll()
+        } catch (e) {
+            setError(e?.response?.data?.message || 'Không thể cấp thẻ')
+        } finally {
+            setIsLoading(false)
+        }
+    }
+
+    const submitIssueCard = async () => {
+        if (!issueModalData) return
+        const { id, isPaid, vehicleType } = issueModalData
+        const rfid = rfidInput.trim()
+        
+        if (vehicleType === 'Xe máy' && !rfid) {
+            window.alert('Mã thẻ RFID không được để trống đối với xe máy!')
+            return
+        }
+
+        try {
+            setIsLoading(true)
+            await api.patch(`/api/subscriptions/${id}/issue-card`, {
+                confirmCash: !isPaid,
+                rfidCard: rfid || null,
+            })
+            setIssueModalData(null)
             await fetchAll()
         } catch (e) {
             setError(e?.response?.data?.message || 'Không thể cấp thẻ')
@@ -235,7 +287,7 @@ function MonthlyRequests() {
                         className="primary-btn"
                         style={{ height: '36px', opacity: canIssue ? 1 : 0.45, cursor: canIssue ? 'pointer' : 'not-allowed' }}
                         disabled={isLoading || !canIssue}
-                        onClick={() => handleIssueCard(item.id, isPaid, item.vehicleType)}
+                        onClick={() => handleIssueCard(item.id, isPaid, item.vehicleType, item.user, item.licensePlate)}
                     >
                         Cấp thẻ
                     </button>
@@ -347,6 +399,152 @@ function MonthlyRequests() {
                     </div>
                     <DataTable columns={historyColumns} data={historyRows} />
                 </>
+            )}
+        
+            {/* Custom Modal Cấp Thẻ RFID */}
+            {issueModalData && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+                    backdropFilter: 'blur(6px)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 9999,
+                    fontFamily: 'system-ui, -apple-system, sans-serif'
+                }}>
+                    <div style={{
+                        width: '90%', maxWidth: '440px',
+                        backgroundColor: '#ffffff',
+                        color: '#1e293b',
+                        borderRadius: '16px',
+                        padding: '28px',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                        border: '1px solid #e2e8f0',
+                        animation: 'fadeIn 0.2s ease-out'
+                    }}>
+                        <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: '700', color: '#0f172a' }}>
+                            Cấp Thẻ RFID Vé Tháng
+                        </h3>
+                        <p style={{ margin: '0 0 20px 0', fontSize: '13.5px', color: '#64748b', lineHeight: '1.5' }}>
+                            Đang xử lý cấp thẻ cho đăng ký xe máy của <strong>{issueModalData.user}</strong> (Biển số: {issueModalData.licensePlate}).
+                        </p>
+    
+                        {/* RFID Swipe Detector Card */}
+                        <div style={{
+                            padding: '16px',
+                            borderRadius: '12px',
+                            backgroundColor: cardDetected ? '#f0fdf4' : '#eff6ff',
+                            border: cardDetected ? '1px solid #bbf7d0' : '1px solid #bfdbfe',
+                            marginBottom: '20px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            textAlign: 'center',
+                            transition: 'all 0.3s ease'
+                        }}>
+                            {!cardDetected ? (
+                                <>
+                                    <div style={{
+                                        width: '40px', height: '40px', borderRadius: '50%',
+                                        backgroundColor: '#dbeafe', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        marginBottom: '12px', color: '#2563eb', fontWeight: 'bold', fontSize: '18px',
+                                        animation: 'pulse 1.5s infinite'
+                                    }}>
+                                        📶
+                                    </div>
+                                    <span style={{ fontSize: '13.5px', fontWeight: '600', color: '#1e40af', marginBottom: '4px' }}>
+                                        Chờ Quẹt Thẻ RFID...
+                                    </span>
+                                    <span style={{ fontSize: '12px', color: '#60a5fa' }}>
+                                        Vui lòng quẹt thẻ lên đầu đọc tại cổng
+                                    </span>
+                                </>
+                            ) : (
+                                <>
+                                    <div style={{
+                                        width: '40px', height: '40px', borderRadius: '50%',
+                                        backgroundColor: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        marginBottom: '12px', color: '#15803d', fontWeight: 'bold', fontSize: '18px'
+                                    }}>
+                                        ✓
+                                    </div>
+                                    <span style={{ fontSize: '13.5px', fontWeight: '600', color: '#166534', marginBottom: '4px' }}>
+                                        Đã Phát Hiện Thẻ!
+                                    </span>
+                                    <span style={{ fontSize: '12px', color: '#16a34a', fontWeight: 'bold' }}>
+                                        Mã thẻ vừa quẹt: {rfidInput}
+                                    </span>
+                                </>
+                            )}
+                        </div>
+    
+                        {/* Input Field */}
+                        <div style={{ marginBottom: '24px' }}>
+                            <label style={{
+                                display: 'block', fontSize: '12.5px', fontWeight: '600', color: '#475569',
+                                textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px'
+                            }}>
+                                Mã Thẻ RFID (UID)
+                            </label>
+                            <input
+                                type="text"
+                                placeholder="Nhập mã hoặc quẹt thẻ để điền tự động..."
+                                value={rfidInput}
+                                onChange={(e) => {
+                                    setRfidInput(e.target.value)
+                                    if (e.target.value.trim() === '') setCardDetected(false)
+                                }}
+                                style={{
+                                    width: '100%', padding: '12px 14px',
+                                    border: '1px solid #cbd5e1', borderRadius: '10px',
+                                    fontSize: '14px', color: '#1e293b', outline: 'none',
+                                    boxSizing: 'border-box', transition: 'border-color 0.2s',
+                                    backgroundColor: '#f8fafc'
+                                }}
+                            />
+                        </div>
+    
+                        {/* Modal Action Buttons */}
+                        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                            <button
+                                onClick={() => setIssueModalData(null)}
+                                style={{
+                                    padding: '10px 18px', backgroundColor: '#f1f5f9', color: '#475569',
+                                    border: 'none', borderRadius: '10px', fontWeight: '600', fontSize: '13.5px',
+                                    cursor: 'pointer', transition: 'background-color 0.2s'
+                                }}
+                            >
+                                Hủy
+                            </button>
+                            <button
+                                onClick={submitIssueCard}
+                                disabled={isLoading || !rfidInput.trim()}
+                                style={{
+                                    padding: '10px 20px',
+                                    backgroundColor: rfidInput.trim() ? '#2563eb' : '#94a3b8',
+                                    color: '#ffffff',
+                                    border: 'none', borderRadius: '10px', fontWeight: '600', fontSize: '13.5px',
+                                    cursor: rfidInput.trim() ? 'pointer' : 'not-allowed',
+                                    transition: 'background-color 0.2s'
+                                }}
+                            >
+                                {isLoading ? 'Đang cấp...' : 'Xác Nhận Cấp Thẻ'}
+                            </button>
+                        </div>
+                    </div>
+                    
+                    {/* CSS Animations helper inside style tags */}
+                    <style>{`
+                        @keyframes pulse {
+                            0% { transform: scale(1); opacity: 1; }
+                            50% { transform: scale(1.1); opacity: 0.7; }
+                            100% { transform: scale(1); opacity: 1; }
+                        }
+                        @keyframes fadeIn {
+                            from { transform: scale(0.95); opacity: 0; }
+                            to { transform: scale(1); opacity: 1; }
+                        }
+                    `}</style>
+                </div>
             )}
         </div>
     )

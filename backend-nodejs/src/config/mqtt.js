@@ -14,6 +14,9 @@ const OUT_TIMEOUT = 5000;   // 5 giây
 let mqttClient = null;
 export function getMQTTClient() { return mqttClient; }
 
+let latestSwipedRfid = null;
+export function getLatestSwipedRfid() { return latestSwipedRfid; }
+
 // SePay configurations for VietQR generation
 const SEPAY_ACCOUNT = process.env.SEPAY_ACCOUNT || '96247KCHIP';
 const SEPAY_BANK_CODE = process.env.SEPAY_BANK_CODE || 'BIDV';
@@ -104,6 +107,10 @@ function createSession(gate) {
  */
 function addRfidToSession(gate, cardID) {
     const normalizedRfid = String(cardID).trim().toUpperCase();
+    latestSwipedRfid = {
+        rfid: normalizedRfid,
+        timestamp: new Date()
+    };
     if (sessions[gate].status === 'idle') {
         console.log(`[SESSION] RFID arrived before sensor on gate=${gate} — auto-creating session`);
         createSession(gate);
@@ -320,38 +327,35 @@ async function handleEntryValidation(sessionId, rfid, plate, image_b64) {
             const cleanRegistered = vehicle.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
             const cleanScanned    = plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
 
-            if (cleanRegistered === cleanScanned) {
-                console.log(`[SESSION ${sessionId}] Monthly IN matched: ${vehicle.licensePlate}`);
-                // Bug fix: sessionCode dùng counter + random suffix để tránh duplicate key khi 2 xe vào cùng millisecond
-                const sessionCode = `PS-IN-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-                try {
-                    const ps = await ParkingSession.create({
-                        sessionCode,
-                        vehicleId:    vehicle._id,
-                        userId:       subscription.userId,
-                        licensePlate: vehicle.licensePlate,
-                        vehicleType:  vehicle.vehicleType,
-                        entryAt:      new Date(),
-                        entryMethod:  'rfid',
-                        isVisitor:    false,
-                        status:       'in_progress',
-                        rfid:         normalizedRfid,
-                        notes:        `RFID: ${normalizedRfid} | Session: ${sessionId}`,
-                    });
-                    console.log(`[SESSION ${sessionId}] DB entry session created: ${ps._id}`);
-                } catch (dbErr) {
-                    console.error(`[SESSION ${sessionId}] FAILED to create monthly entry session:`, dbErr.message);
-                    throw dbErr;   // re-throw để validateAndOpen biết lỗi
-                }
-                return true;
-            } else {
-                console.log(`[SESSION ${sessionId}] Monthly IN mismatch: registered=${vehicle.licensePlate}, scanned=${plate}`);
-                await updateScanInfo('in',
-                    `Lệch biển số xe tháng! Đăng ký: ${vehicle.licensePlate}, AI đọc: ${plate}`,
-                    normalizedRfid, plate, image_b64
-                );
-                return false;
+            if (cleanRegistered !== cleanScanned) {
+                console.log(`[SESSION ${sessionId}] Monthly IN license plate changed from ${vehicle.licensePlate} to ${plate}. Updating vehicle record...`);
+                vehicle.licensePlate = plate;
+                await vehicle.save();
             }
+
+            console.log(`[SESSION ${sessionId}] Monthly IN matched: ${vehicle.licensePlate}`);
+            // Bug fix: sessionCode dùng counter + random suffix để tránh duplicate key khi 2 xe vào cùng millisecond
+            const sessionCode = `PS-IN-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+            try {
+                const ps = await ParkingSession.create({
+                    sessionCode,
+                    vehicleId:    vehicle._id,
+                    userId:       subscription.userId,
+                    licensePlate: vehicle.licensePlate,
+                    vehicleType:  vehicle.vehicleType,
+                    entryAt:      new Date(),
+                    entryMethod:  'rfid',
+                    isVisitor:    false,
+                    status:       'in_progress',
+                    rfid:         normalizedRfid,
+                    notes:        `RFID: ${normalizedRfid} | Session: ${sessionId}`,
+                });
+                console.log(`[SESSION ${sessionId}] DB entry session created: ${ps._id}`);
+            } catch (dbErr) {
+                console.error(`[SESSION ${sessionId}] FAILED to create monthly entry session:`, dbErr.message);
+                throw dbErr;   // re-throw để validateAndOpen biết lỗi
+            }
+            return true;
         } else {
             // Bug fix: vehicle tồn tại nhưng không có gói active → xử lý như xe vãng lai
             console.log(`[SESSION ${sessionId}] Vehicle ${normalizedRfid} found but no active subscription — treating as visitor`);
@@ -392,53 +396,38 @@ async function handleExitValidation(sessionId, rfid, plate, image_b64) {
             const cleanRegistered = vehicle.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
             const cleanScanned    = plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
 
-            if (cleanRegistered === cleanScanned) {
-                const activeSession = await ParkingSession.findOne({
-                    vehicleId: vehicle._id,
-                    status:    'in_progress',
-                });
-                if (activeSession) {
-                    console.log(`[SESSION ${sessionId}] Monthly OUT matched: ${vehicle.licensePlate}`);
-                    activeSession.exitAt          = new Date();
-                    activeSession.exitMethod      = 'rfid';
-                    activeSession.status          = 'completed';
-                    activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
-                    activeSession.feeAmount       = 0;
-                    activeSession.paymentStatus   = 'paid';
-                    await activeSession.save();
+            if (cleanRegistered !== cleanScanned) {
+                console.log(`[SESSION ${sessionId}] Monthly OUT license plate changed from ${vehicle.licensePlate} to ${plate}. Updating vehicle record...`);
+                vehicle.licensePlate = plate;
+                await vehicle.save();
+            }
 
-                    // Gửi thông tin thành công lên AI server
-                    await updateScanInfo('out', null, normalizedRfid, plate, image_b64, {
-                        entryTime: activeSession.entryAt.toLocaleTimeString('vi-VN') + ' ' + activeSession.entryAt.toLocaleDateString('vi-VN'),
-                        exitTime: activeSession.exitAt.toLocaleTimeString('vi-VN') + ' ' + activeSession.exitAt.toLocaleDateString('vi-VN'),
-                        fee: 0,
-                        paymentStatus: 'paid'
-                    });
-                    return true;
-                } else {
-                    console.log(`[SESSION ${sessionId}] Monthly OUT: no active session!`);
-                    await updateScanInfo('out', 'Xe tháng chưa quét lượt vào!', normalizedRfid, plate, image_b64);
-                    return false;
-                }
-            } else {
-                console.log(`[SESSION ${sessionId}] Monthly OUT mismatch: registered=${vehicle.licensePlate}, scanned=${plate}`);
-                // Lệch biển số xe tháng: Vẫn hiển thị giờ vào/ra trên dashboard
-                const activeSession = await ParkingSession.findOne({
-                    rfid: normalizedRfid,
-                    status: 'in_progress',
+            const activeSession = await ParkingSession.findOne({
+                vehicleId: vehicle._id,
+                status:    'in_progress',
+            });
+            if (activeSession) {
+                console.log(`[SESSION ${sessionId}] Monthly OUT matched: ${vehicle.licensePlate}`);
+                activeSession.licensePlate    = plate; // Đồng bộ biển số mới vào session
+                activeSession.exitAt          = new Date();
+                activeSession.exitMethod      = 'rfid';
+                activeSession.status          = 'completed';
+                activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
+                activeSession.feeAmount       = 0;
+                activeSession.paymentStatus   = 'paid';
+                await activeSession.save();
+
+                // Gửi thông tin thành công lên AI server
+                await updateScanInfo('out', null, normalizedRfid, plate, image_b64, {
+                    entryTime: activeSession.entryAt.toLocaleTimeString('vi-VN') + ' ' + activeSession.entryAt.toLocaleDateString('vi-VN'),
+                    exitTime: activeSession.exitAt.toLocaleTimeString('vi-VN') + ' ' + activeSession.exitAt.toLocaleDateString('vi-VN'),
+                    fee: 0,
+                    paymentStatus: 'paid'
                 });
-                const extra = {};
-                if (activeSession) {
-                    const now = new Date();
-                    extra.entryTime = activeSession.entryAt.toLocaleTimeString('vi-VN') + ' ' + activeSession.entryAt.toLocaleDateString('vi-VN');
-                    extra.exitTime = now.toLocaleTimeString('vi-VN') + ' ' + now.toLocaleDateString('vi-VN');
-                    extra.fee = 0;
-                    extra.paymentStatus = 'paid';
-                }
-                await updateScanInfo('out',
-                    `Lệch biển số xe tháng! Đăng ký: ${vehicle.licensePlate}, AI đọc: ${plate}`,
-                    normalizedRfid, plate, image_b64, extra
-                );
+                return true;
+            } else {
+                console.log(`[SESSION ${sessionId}] Monthly OUT: no active session!`);
+                await updateScanInfo('out', 'Xe tháng chưa quét lượt vào!', normalizedRfid, plate, image_b64);
                 return false;
             }
         } else {
@@ -511,7 +500,7 @@ async function handleExitValidation(sessionId, rfid, plate, image_b64) {
 }
 
 // ─── AprilTag Auto-Entry (xe ô tô tháng, không cần RFID) ──────────────────────
-async function handleAprilTagAutoEntry(gate, aiData) {
+export async function handleAprilTagAutoEntry(gate, aiData) {
     if (!aiData || aiData.apriltag == null) return false;
 
     const vehicle = await Vehicle.findOne({ arucoId: aiData.apriltag, vehicleType: 'car' });
@@ -523,56 +512,55 @@ async function handleAprilTagAutoEntry(gate, aiData) {
     const cleanRegistered = vehicle.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
     const cleanScanned    = aiData.plate ? aiData.plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
 
-    if (cleanRegistered === cleanScanned) {
-        console.log(`[AprilTag] Car monthly matched: ${vehicle.licensePlate} → auto-open gate=${gate}`);
-        openBarrierMQTT(gate, vehicle.licensePlate);
-
-        if (gate === 'in') {
-            const sessionCode = `PS-IN-CAR-${Date.now()}`;
-            await ParkingSession.create({
-                sessionCode,
-                vehicleId:    vehicle._id,
-                userId:       subscription.userId,
-                licensePlate: vehicle.licensePlate,
-                vehicleType:  'car',
-                entryAt:      new Date(),
-                entryMethod:  'ai',
-                isVisitor:    false,
-                status:       'in_progress',
-                rfid:         vehicle.rfidCard ? vehicle.rfidCard.toUpperCase().trim() : null, // Đồng bộ rfid từ vehicle để đối soát lúc ra
-                notes:        `AprilTag ID: ${aiData.apriltag}`,
-            });
-        } else {
-            const activeSession = await ParkingSession.findOne({
-                vehicleId: vehicle._id,
-                status:    'in_progress',
-            });
-            if (activeSession) {
-                activeSession.exitAt          = new Date();
-                activeSession.exitMethod      = 'ai';
-                activeSession.status          = 'completed';
-                activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
-                activeSession.feeAmount       = 0;
-                activeSession.paymentStatus   = 'paid';
-                await activeSession.save();
-            }
-        }
-
-        // Đánh dấu session done vì AprilTag đã xử lý xong
-        const sess = sessions[gate];
-        if (sess.status === 'collecting') {
-            if (sess.timer) clearTimeout(sess.timer);
-            sessions[gate].status = 'done';
-            console.log(`[SESSION ${sess.id}] Completed via AprilTag auto-entry`);
-        }
-        return true;
-    } else {
-        console.log(`[AprilTag] Mismatch: registered=${vehicle.licensePlate}, scanned=${aiData.plate}`);
-        await updateScanInfo(gate,
-            `Lệch biển số xe tháng! Đăng ký: ${vehicle.licensePlate}, AI đọc: ${aiData.plate || 'Không đọc được'}`
-        );
-        return false;
+    if (cleanScanned && cleanRegistered !== cleanScanned) {
+        console.log(`[AprilTag] Car monthly license plate changed from ${vehicle.licensePlate} to ${aiData.plate}. Updating vehicle record...`);
+        vehicle.licensePlate = aiData.plate;
+        await vehicle.save();
     }
+
+    console.log(`[AprilTag] Car monthly matched/updated: ${vehicle.licensePlate} → auto-open gate=${gate}`);
+    openBarrierMQTT(gate, vehicle.licensePlate);
+
+    if (gate === 'in') {
+        const sessionCode = `PS-IN-CAR-${Date.now()}`;
+        await ParkingSession.create({
+            sessionCode,
+            vehicleId:    vehicle._id,
+            userId:       subscription.userId,
+            licensePlate: vehicle.licensePlate,
+            vehicleType:  'car',
+            entryAt:      new Date(),
+            entryMethod:  'ai',
+            isVisitor:    false,
+            status:       'in_progress',
+            rfid:         vehicle.rfidCard ? vehicle.rfidCard.toUpperCase().trim() : null, // Đồng bộ rfid từ vehicle để đối soát lúc ra
+            notes:        `AprilTag ID: ${aiData.apriltag}`,
+        });
+    } else {
+        const activeSession = await ParkingSession.findOne({
+            vehicleId: vehicle._id,
+            status:    'in_progress',
+        });
+        if (activeSession) {
+            activeSession.licensePlate    = vehicle.licensePlate; // Đồng bộ biển số mới vào session
+            activeSession.exitAt          = new Date();
+            activeSession.exitMethod      = 'ai';
+            activeSession.status          = 'completed';
+            activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
+            activeSession.feeAmount       = 0;
+            activeSession.paymentStatus   = 'paid';
+            await activeSession.save();
+        }
+    }
+
+    // Đánh dấu session done vì AprilTag đã xử lý xong
+    const sess = sessions[gate];
+    if (sess.status === 'collecting') {
+        if (sess.timer) clearTimeout(sess.timer);
+        sessions[gate].status = 'done';
+        console.log(`[SESSION ${sess.id}] Completed via AprilTag auto-entry`);
+    }
+    return true;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
