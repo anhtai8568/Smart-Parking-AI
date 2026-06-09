@@ -260,12 +260,18 @@ export async function forgotPassword(req, res) {
             resetUrl,
         })
 
-        await sendMail({
-            to: user.email,
-            subject,
-            text,
-            html,
-        })
+        try {
+            await sendMail({ to: user.email, subject, text, html })
+        } catch (_emailErr) {
+            // Rollback: xóa token nếu gửi email thất bại
+            user.resetPasswordTokenHash = null
+            user.resetPasswordExpiresAt = null
+            await user.save()
+            return res.status(500).json({
+                status: 'error',
+                message: 'Không thể gửi email, vui lòng thử lại sau',
+            })
+        }
 
         return res.json({
             status: 'success',

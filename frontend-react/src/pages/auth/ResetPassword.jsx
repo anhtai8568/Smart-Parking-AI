@@ -111,6 +111,13 @@ const ResetPassword = () => {
                     Nhập mật khẩu mới để hoàn tất.
                 </p>
 
+                {!token && (
+                    <div style={{ color: '#fca5a5', fontSize: '13px', textAlign: 'center', marginBottom: '16px' }}>
+                        Link đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.{' '}
+                        <Link to="/forgot-password" style={{ color: '#93c5fd' }}>Yêu cầu link mới</Link>
+                    </div>
+                )}
+
                 <form onSubmit={handleSubmit}>
                     <label style={{ color: '#93c5fd', fontSize: '13px' }}>MẬT KHẨU MỚI</label>
                     <input
