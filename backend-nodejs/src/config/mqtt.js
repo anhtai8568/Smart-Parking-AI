@@ -462,7 +462,7 @@ async function handleExitValidation(sessionId, rfid, plate, image_b64) {
         const durationMs      = now - activeSession.entryAt;
         const durationSeconds = Math.round(durationMs / 1000);
         const FEE_PER_SECOND  = parseFloat(process.env.FEE_PER_SECOND || '3'); // VND/giây (~10,800đ/giờ)
-        const fee = Math.max(Math.round(durationSeconds * FEE_PER_SECOND), 1000); // tối thiểu 1,000đ
+        const fee = Math.max(Math.round(durationSeconds * FEE_PER_SECOND), 2000); // tối thiểu 2,000đ
         const entryTimeStr = activeSession.entryAt.toLocaleTimeString('vi-VN') + ' ' + activeSession.entryAt.toLocaleDateString('vi-VN');
         const exitTimeStr  = now.toLocaleTimeString('vi-VN') + ' ' + now.toLocaleDateString('vi-VN');
         const qrUrl = buildVietQrUrl({ amount: fee, code: `DX${normalizedRfid}` });

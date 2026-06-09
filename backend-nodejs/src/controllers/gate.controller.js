@@ -58,7 +58,7 @@ export async function openBarrier(req, res) {
                         const durationSeconds = Math.round(durationMs / 1000);
                         const FEE_PER_SECOND = parseFloat(process.env.FEE_PER_SECOND || '3');
                         const fee = activeSession.isVisitor
-                            ? Math.max(Math.round(durationSeconds * FEE_PER_SECOND), 1000)
+                            ? Math.max(Math.round(durationSeconds * FEE_PER_SECOND), 2000)
                             : 0;
                         activeSession.exitAt          = exitNow;
                         activeSession.exitMethod      = 'manual';
