@@ -500,7 +500,7 @@ async function handleExitValidation(sessionId, rfid, plate, image_b64) {
 }
 
 // ─── AprilTag Auto-Entry (xe ô tô tháng, không cần RFID) ──────────────────────
-async function handleAprilTagAutoEntry(gate, aiData) {
+export async function handleAprilTagAutoEntry(gate, aiData) {
     if (!aiData || aiData.apriltag == null) return false;
 
     const vehicle = await Vehicle.findOne({ arucoId: aiData.apriltag, vehicleType: 'car' });
@@ -512,56 +512,55 @@ async function handleAprilTagAutoEntry(gate, aiData) {
     const cleanRegistered = vehicle.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
     const cleanScanned    = aiData.plate ? aiData.plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
 
-    if (cleanRegistered === cleanScanned) {
-        console.log(`[AprilTag] Car monthly matched: ${vehicle.licensePlate} → auto-open gate=${gate}`);
-        openBarrierMQTT(gate, vehicle.licensePlate);
-
-        if (gate === 'in') {
-            const sessionCode = `PS-IN-CAR-${Date.now()}`;
-            await ParkingSession.create({
-                sessionCode,
-                vehicleId:    vehicle._id,
-                userId:       subscription.userId,
-                licensePlate: vehicle.licensePlate,
-                vehicleType:  'car',
-                entryAt:      new Date(),
-                entryMethod:  'ai',
-                isVisitor:    false,
-                status:       'in_progress',
-                rfid:         vehicle.rfidCard ? vehicle.rfidCard.toUpperCase().trim() : null, // Đồng bộ rfid từ vehicle để đối soát lúc ra
-                notes:        `AprilTag ID: ${aiData.apriltag}`,
-            });
-        } else {
-            const activeSession = await ParkingSession.findOne({
-                vehicleId: vehicle._id,
-                status:    'in_progress',
-            });
-            if (activeSession) {
-                activeSession.exitAt          = new Date();
-                activeSession.exitMethod      = 'ai';
-                activeSession.status          = 'completed';
-                activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
-                activeSession.feeAmount       = 0;
-                activeSession.paymentStatus   = 'paid';
-                await activeSession.save();
-            }
-        }
-
-        // Đánh dấu session done vì AprilTag đã xử lý xong
-        const sess = sessions[gate];
-        if (sess.status === 'collecting') {
-            if (sess.timer) clearTimeout(sess.timer);
-            sessions[gate].status = 'done';
-            console.log(`[SESSION ${sess.id}] Completed via AprilTag auto-entry`);
-        }
-        return true;
-    } else {
-        console.log(`[AprilTag] Mismatch: registered=${vehicle.licensePlate}, scanned=${aiData.plate}`);
-        await updateScanInfo(gate,
-            `Lệch biển số xe tháng! Đăng ký: ${vehicle.licensePlate}, AI đọc: ${aiData.plate || 'Không đọc được'}`
-        );
-        return false;
+    if (cleanScanned && cleanRegistered !== cleanScanned) {
+        console.log(`[AprilTag] Car monthly license plate changed from ${vehicle.licensePlate} to ${aiData.plate}. Updating vehicle record...`);
+        vehicle.licensePlate = aiData.plate;
+        await vehicle.save();
     }
+
+    console.log(`[AprilTag] Car monthly matched/updated: ${vehicle.licensePlate} → auto-open gate=${gate}`);
+    openBarrierMQTT(gate, vehicle.licensePlate);
+
+    if (gate === 'in') {
+        const sessionCode = `PS-IN-CAR-${Date.now()}`;
+        await ParkingSession.create({
+            sessionCode,
+            vehicleId:    vehicle._id,
+            userId:       subscription.userId,
+            licensePlate: vehicle.licensePlate,
+            vehicleType:  'car',
+            entryAt:      new Date(),
+            entryMethod:  'ai',
+            isVisitor:    false,
+            status:       'in_progress',
+            rfid:         vehicle.rfidCard ? vehicle.rfidCard.toUpperCase().trim() : null, // Đồng bộ rfid từ vehicle để đối soát lúc ra
+            notes:        `AprilTag ID: ${aiData.apriltag}`,
+        });
+    } else {
+        const activeSession = await ParkingSession.findOne({
+            vehicleId: vehicle._id,
+            status:    'in_progress',
+        });
+        if (activeSession) {
+            activeSession.licensePlate    = vehicle.licensePlate; // Đồng bộ biển số mới vào session
+            activeSession.exitAt          = new Date();
+            activeSession.exitMethod      = 'ai';
+            activeSession.status          = 'completed';
+            activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
+            activeSession.feeAmount       = 0;
+            activeSession.paymentStatus   = 'paid';
+            await activeSession.save();
+        }
+    }
+
+    // Đánh dấu session done vì AprilTag đã xử lý xong
+    const sess = sessions[gate];
+    if (sess.status === 'collecting') {
+        if (sess.timer) clearTimeout(sess.timer);
+        sessions[gate].status = 'done';
+        console.log(`[SESSION ${sess.id}] Completed via AprilTag auto-entry`);
+    }
+    return true;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
