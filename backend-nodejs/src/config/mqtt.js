@@ -511,15 +511,26 @@ export async function handleAprilTagAutoEntry(gate, aiData) {
 
     const cleanRegistered = vehicle.licensePlate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
     const cleanScanned    = aiData.plate ? aiData.plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
+    const hasPlateMismatch = cleanScanned && cleanRegistered !== cleanScanned;
 
-    if (cleanScanned && cleanRegistered !== cleanScanned) {
-        console.log(`[AprilTag] Car monthly license plate changed from ${vehicle.licensePlate} to ${aiData.plate}. Updating vehicle record...`);
-        vehicle.licensePlate = aiData.plate;
-        await vehicle.save();
-    }
-
-    console.log(`[AprilTag] Car monthly matched/updated: ${vehicle.licensePlate} → auto-open gate=${gate}`);
+    // AprilTag là xác thực chính — mở barrier dù biển số có khác hay không
+    console.log(`[AprilTag] ${hasPlateMismatch
+        ? `Biển số AI đọc "${aiData.plate}" ≠ đăng ký "${vehicle.licensePlate}" — mở barrier theo AprilTag`
+        : `Khớp hoàn toàn: ${vehicle.licensePlate} → mở gate=${gate}`}`);
     openBarrierMQTT(gate, vehicle.licensePlate);
+
+    // Thông báo lên dashboard bảo vệ
+    const warningMsg = hasPlateMismatch
+        ? `Biển số nhận diện "${aiData.plate}" khác biển đăng ký "${vehicle.licensePlate}". AprilTag hợp lệ — đã mở barrier.`
+        : null;
+    await updateScanInfo(
+        gate,
+        warningMsg,
+        vehicle.rfidCard ? vehicle.rfidCard.toUpperCase().trim() : null,
+        hasPlateMismatch ? aiData.plate : vehicle.licensePlate,
+        aiData.image_b64,
+        { apriltagId: aiData.apriltag, registeredPlate: vehicle.licensePlate }
+    );
 
     if (gate === 'in') {
         const sessionCode = `PS-IN-CAR-${Date.now()}`;
@@ -527,14 +538,14 @@ export async function handleAprilTagAutoEntry(gate, aiData) {
             sessionCode,
             vehicleId:    vehicle._id,
             userId:       subscription.userId,
-            licensePlate: vehicle.licensePlate,
+            licensePlate: vehicle.licensePlate, // Luôn dùng biển đăng ký, không dùng biển AI đọc
             vehicleType:  'car',
             entryAt:      new Date(),
             entryMethod:  'ai',
             isVisitor:    false,
             status:       'in_progress',
-            rfid:         vehicle.rfidCard ? vehicle.rfidCard.toUpperCase().trim() : null, // Đồng bộ rfid từ vehicle để đối soát lúc ra
-            notes:        `AprilTag ID: ${aiData.apriltag}`,
+            rfid:         vehicle.rfidCard ? vehicle.rfidCard.toUpperCase().trim() : null,
+            notes:        `AprilTag ID: ${aiData.apriltag}${hasPlateMismatch ? ` | AI đọc: ${aiData.plate}` : ''}`,
         });
     } else {
         const activeSession = await ParkingSession.findOne({
@@ -542,13 +553,15 @@ export async function handleAprilTagAutoEntry(gate, aiData) {
             status:    'in_progress',
         });
         if (activeSession) {
-            activeSession.licensePlate    = vehicle.licensePlate; // Đồng bộ biển số mới vào session
             activeSession.exitAt          = new Date();
             activeSession.exitMethod      = 'ai';
             activeSession.status          = 'completed';
             activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
             activeSession.feeAmount       = 0;
             activeSession.paymentStatus   = 'paid';
+            if (hasPlateMismatch) {
+                activeSession.notes += ` | AI đọc biển số khác: ${aiData.plate}`;
+            }
             await activeSession.save();
         }
     }
