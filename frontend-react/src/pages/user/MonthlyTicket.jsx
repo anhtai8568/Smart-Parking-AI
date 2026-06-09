@@ -7,6 +7,23 @@ import {
   AlertCircle, RefreshCw, XCircle, Copy, Check, User, Info as InfoIcon
 } from 'lucide-react';
 
+// Auto-format: uppercase, strip spaces, insert hyphen after 2-digit+letter(+digit) prefix
+function formatLicensePlate(raw) {
+  const v = raw.toUpperCase().replace(/\s/g, '')
+  if (v.includes('-')) {
+    const dash = v.indexOf('-')
+    const prefix = v.slice(0, dash).replace(/[^A-Z0-9]/g, '').slice(0, 4)
+    const suffix = v.slice(dash + 1).replace(/[^0-9.]/g, '').slice(0, 7)
+    return `${prefix}-${suffix}`
+  }
+  const clean = v.replace(/[^A-Z0-9]/g, '')
+  const match = clean.match(/^(\d{2}[A-Z]\d?)(.+)$/)
+  if (match) return `${match[1]}-${match[2].replace(/[^0-9.]/g, '').slice(0, 7)}`
+  return clean.slice(0, 4)
+}
+
+const PLATE_REGEX = /^\d{2}[A-Z]\d?-\d{3,5}(\.\d{1,2})?$/
+
 const STATUS_LABEL = {
   active: 'Đang hoạt động', pending: 'Chờ duyệt', approved: 'Đã duyệt',
   expired: 'Hết hạn', rejected: 'Bị từ chối', cancelled: 'Đã hủy',
@@ -180,6 +197,7 @@ const MonthlyTicket = () => {
     if (isAlreadyRegistered) { setError('Bạn đã có gói tháng cho loại xe này.'); return; }
     const licensePlate = formData.licensePlate.trim();
     if (!licensePlate) { setError('Vui lòng nhập biển số xe'); return; }
+    if (!PLATE_REGEX.test(licensePlate)) { setError('Biển số không đúng định dạng. Ví dụ: 30A-12345 hoặc 59A1-12345'); return; }
     const phone = formData.phone.trim();
     if (!phone) { setError('Vui lòng nhập số điện thoại'); return; }
     if (!pricePerMonth) { setError('Bảng giá chưa sẵn sàng'); return; }
@@ -338,13 +356,18 @@ const MonthlyTicket = () => {
           <div className="form-grid">
             <div className="input-group">
               <label className="input-label"><CreditCard size={14} /> Biển Số Xe</label>
-              <input 
-                className="input-field" 
-                placeholder="Ví dụ: 30A-12345" 
-                value={formData.licensePlate} 
-                onChange={(e) => setFormData({ ...formData, licensePlate: e.target.value })} 
+              <input
+                className="input-field"
+                placeholder="VD: 30A-12345 hoặc 59A1-12345"
+                value={formData.licensePlate}
+                onChange={(e) => setFormData({ ...formData, licensePlate: formatLicensePlate(e.target.value) })}
+                style={{ letterSpacing: '1.5px' }}
               />
-              <div className="input-icon-wrapper"><CreditCard size={18} /></div>
+              {formData.licensePlate && !PLATE_REGEX.test(formData.licensePlate) && (
+                <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '2px' }}>
+                  Định dạng: 30A-12345 hoặc 59A1-12345
+                </div>
+              )}
             </div>
             
             <div className="input-group">
@@ -356,7 +379,6 @@ const MonthlyTicket = () => {
                 value={formData.phone} 
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })} 
               />
-              <div className="input-icon-wrapper"><Phone size={18} /></div>
             </div>
 
             <div className="input-group">
@@ -367,7 +389,6 @@ const MonthlyTicket = () => {
                 value={formData.brand} 
                 onChange={(e) => setFormData({ ...formData, brand: e.target.value })} 
               />
-              <div className="input-icon-wrapper"><Car size={18} /></div>
             </div>
 
             <div className="input-group">
@@ -383,7 +404,6 @@ const MonthlyTicket = () => {
                 <option value={6}>06 Tháng (Tiết kiệm 10%)</option>
                 <option value={12}>12 Tháng (Tặng 1 tháng)</option>
               </select>
-              <div className="input-icon-wrapper"><Calendar size={18} /></div>
             </div>
 
             <div className="input-group" style={{ gridColumn: 'span 2' }}>
@@ -394,7 +414,6 @@ const MonthlyTicket = () => {
                 value={formData.color} 
                 onChange={(e) => setFormData({ ...formData, color: e.target.value })} 
               />
-              <div className="input-icon-wrapper"><Edit2 size={18} /></div>
             </div>
           </div>
 
@@ -464,12 +483,20 @@ const MonthlyTicket = () => {
                 {[['phone', 'SĐT liên hệ'], ['licensePlate', 'Biển số xe'], ['brand', 'Hiệu xe'], ['color', 'Màu xe']].map(([key, label]) => (
                   <div key={key} className="input-group">
                     <label className="input-label" style={{ fontSize: '12px' }}>{label}</label>
-                    <input 
-                      className="input-field" 
-                      style={{ paddingLeft: '16px' }}
-                      value={editData[key] || ''} 
-                      onChange={(e) => setEditData({ ...editData, [key]: e.target.value })} 
+                    <input
+                      className="input-field"
+                      style={{ paddingLeft: '16px', letterSpacing: key === 'licensePlate' ? '1.5px' : undefined }}
+                      value={editData[key] || ''}
+                      onChange={(e) => setEditData({
+                        ...editData,
+                        [key]: key === 'licensePlate' ? formatLicensePlate(e.target.value) : e.target.value,
+                      })}
                     />
+                    {key === 'licensePlate' && editData.licensePlate && !PLATE_REGEX.test(editData.licensePlate) && (
+                      <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '2px' }}>
+                        Định dạng: 30A-12345 hoặc 59A1-12345
+                      </div>
+                    )}
                   </div>
                 ))}
                 <div className="input-group" style={{ gridColumn: 'span 2' }}>
@@ -756,7 +783,7 @@ const MonthlyTicket = () => {
         }
         .input-field {
           width: 100%;
-          padding: 14px 16px 14px 44px;
+          padding: 14px 16px;
           background: #ffffff;
           border: 1.5px solid #e2e8f0;
           border-radius: 12px;
@@ -770,16 +797,6 @@ const MonthlyTicket = () => {
         .input-field:focus {
           border-color: #2563eb;
           box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
-        }
-        .input-icon-wrapper {
-          position: absolute;
-          left: 14px;
-          top: 36px;
-          color: #94a3b8;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          pointer-events: none;
         }
         .tab-btn {
           padding: 16px 20px;
