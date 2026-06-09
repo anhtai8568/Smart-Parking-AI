@@ -7,22 +7,6 @@ import {
   AlertCircle, RefreshCw, XCircle, Copy, Check, User, Info as InfoIcon
 } from 'lucide-react';
 
-// Auto-format: uppercase, strip spaces, insert hyphen after 2-digit+letter(+digit) prefix
-function formatLicensePlate(raw) {
-  const v = raw.toUpperCase().replace(/\s/g, '')
-  if (v.includes('-')) {
-    const dash = v.indexOf('-')
-    const prefix = v.slice(0, dash).replace(/[^A-Z0-9]/g, '').slice(0, 4)
-    const suffix = v.slice(dash + 1).replace(/[^0-9.]/g, '').slice(0, 7)
-    return `${prefix}-${suffix}`
-  }
-  const clean = v.replace(/[^A-Z0-9]/g, '')
-  const match = clean.match(/^(\d{2}[A-Z]\d?)(.+)$/)
-  if (match) return `${match[1]}-${match[2].replace(/[^0-9.]/g, '').slice(0, 7)}`
-  return clean.slice(0, 4)
-}
-
-const PLATE_REGEX = /^\d{2}[A-Z]\d?-\d{3,5}(\.\d{1,2})?$/
 
 const STATUS_LABEL = {
   active: 'Đang hoạt động', pending: 'Chờ duyệt', approved: 'Đã duyệt',
@@ -197,7 +181,6 @@ const MonthlyTicket = () => {
     if (isAlreadyRegistered) { setError('Bạn đã có gói tháng cho loại xe này.'); return; }
     const licensePlate = formData.licensePlate.trim();
     if (!licensePlate) { setError('Vui lòng nhập biển số xe'); return; }
-    if (!PLATE_REGEX.test(licensePlate)) { setError('Biển số không đúng định dạng. Ví dụ: 30A-12345 hoặc 59A1-12345'); return; }
     const phone = formData.phone.trim();
     if (!phone) { setError('Vui lòng nhập số điện thoại'); return; }
     if (!pricePerMonth) { setError('Bảng giá chưa sẵn sàng'); return; }
@@ -358,16 +341,10 @@ const MonthlyTicket = () => {
               <label className="input-label"><CreditCard size={14} /> Biển Số Xe</label>
               <input
                 className="input-field"
-                placeholder="VD: 30A-12345 hoặc 59A1-12345"
+                placeholder="Nhập biển số xe"
                 value={formData.licensePlate}
-                onChange={(e) => setFormData({ ...formData, licensePlate: formatLicensePlate(e.target.value) })}
-                style={{ letterSpacing: '1.5px' }}
+                onChange={(e) => setFormData({ ...formData, licensePlate: e.target.value })}
               />
-              {formData.licensePlate && !PLATE_REGEX.test(formData.licensePlate) && (
-                <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '2px' }}>
-                  Định dạng: 30A-12345 hoặc 59A1-12345
-                </div>
-              )}
             </div>
             
             <div className="input-group">
@@ -489,14 +466,9 @@ const MonthlyTicket = () => {
                       value={editData[key] || ''}
                       onChange={(e) => setEditData({
                         ...editData,
-                        [key]: key === 'licensePlate' ? formatLicensePlate(e.target.value) : e.target.value,
+                        [key]: e.target.value,
                       })}
                     />
-                    {key === 'licensePlate' && editData.licensePlate && !PLATE_REGEX.test(editData.licensePlate) && (
-                      <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '2px' }}>
-                        Định dạng: 30A-12345 hoặc 59A1-12345
-                      </div>
-                    )}
                   </div>
                 ))}
                 <div className="input-group" style={{ gridColumn: 'span 2' }}>
