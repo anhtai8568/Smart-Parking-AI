@@ -21,20 +21,34 @@ function CarIcon({ color }) {
   )
 }
 
+// AudioContext dùng chung – tránh bị trình duyệt chặn khi chưa có user gesture
+let _audioCtx = null
+function getAudioCtx() {
+  if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+  return _audioCtx
+}
+
 function playWarningBeep() {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)()
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.type = 'sawtooth'
-    osc.frequency.setValueAtTime(600, ctx.currentTime)
-    osc.frequency.setValueAtTime(400, ctx.currentTime + 0.15)
-    gain.gain.setValueAtTime(0.2, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4)
-    osc.start(ctx.currentTime)
-    osc.stop(ctx.currentTime + 0.4)
+    const ctx = getAudioCtx()
+    const doPlay = () => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.type = 'sawtooth'
+      osc.frequency.setValueAtTime(600, ctx.currentTime)
+      osc.frequency.setValueAtTime(400, ctx.currentTime + 0.15)
+      gain.gain.setValueAtTime(0.2, ctx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4)
+      osc.start(ctx.currentTime)
+      osc.stop(ctx.currentTime + 0.4)
+    }
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(doPlay).catch(() => {})
+    } else {
+      doPlay()
+    }
   } catch (_) {}
 }
 
@@ -86,10 +100,10 @@ function ParkingSlotGrid() {
     }
   }, [])
 
-  // Lần đầu load + polling mỗi 3 giây (realtime từ cảm biến Mega → MQTT → DB)
+  // Lần đầu load + polling mỗi 5 giây (giảm spam log AxiosError khi backend offline)
   useEffect(() => {
     fetchSlots()
-    const interval = setInterval(fetchSlots, 3000)
+    const interval = setInterval(fetchSlots, 5000)
     return () => clearInterval(interval)
   }, [fetchSlots])
 

@@ -54,6 +54,12 @@ const parkingSessionSchema = new mongoose.Schema(
             type: Boolean,
             default: false,
         },
+        rfid: {
+            type: String,
+            uppercase: true,
+            trim: true,
+            default: null,
+        },
         feeAmount: {
             type: Number,
             default: 0,
@@ -84,6 +90,7 @@ parkingSessionSchema.index({ sessionCode: 1 }, { unique: true })
 parkingSessionSchema.index({ licensePlate: 1, status: 1 })
 parkingSessionSchema.index({ userId: 1, entryAt: -1 })
 parkingSessionSchema.index({ status: 1, entryAt: -1 })
+parkingSessionSchema.index({ rfid: 1, status: 1 })
 
 const ParkingSession = mongoose.model('ParkingSession', parkingSessionSchema)
 

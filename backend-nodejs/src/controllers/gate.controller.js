@@ -1,4 +1,5 @@
 import { getMQTTClient } from '../config/mqtt.js'
+import { addPlateToSession, getSessions } from '../config/mqtt.js'
 import ParkingSession from '../../models/parkingsession.js'
 import Vehicle from '../../models/vehicle.js'
 
@@ -13,39 +14,103 @@ export async function openBarrier(req, res) {
             })
         }
 
-        client.publish('parking/commands/gate', 'OPEN')
-        console.log('[Gate Control] Bảo vệ mở barrier thủ công!')
+        let plate = '';
+        const sessions = getSessions();
+        
+        // Xác định cổng đang cần xử lý thủ công (ưu tiên cổng nào vừa cập nhật gần nhất)
+        let activeGate = null;
+        const inSess = sessions.in;
+        const outSess = sessions.out;
+        
+        if (inSess.status !== 'idle' && outSess.status !== 'idle') {
+            activeGate = inSess.lastUpdatedAt > outSess.lastUpdatedAt ? 'in' : 'out';
+        } else if (inSess.status !== 'idle') {
+            activeGate = 'in';
+        } else if (outSess.status !== 'idle') {
+            activeGate = 'out';
+        }
 
-        // Tự động hoàn thành session đang chờ nếu có xe ra đang bị lệch biển số
         try {
             const AI_SERVER_URL = process.env.AI_SERVER_URL || 'http://localhost:8000';
             const scanRes = await fetch(`${AI_SERVER_URL}/api/latest-scan`);
             const scanJson = await scanRes.json();
             const lastOut = scanJson.data?.out;
-            if (lastOut && lastOut.rfid) {
-                const cardID = lastOut.rfid;
-                // Tìm session chưa hoàn thành của thẻ này (cho cả xe tháng và vãng lai)
-                const activeSession = await ParkingSession.findOne({
-                    notes: { $regex: cardID },
-                    status: 'in_progress'
-                });
-                if (activeSession) {
-                    activeSession.exitAt          = new Date();
-                    activeSession.exitMethod      = 'manual';
-                    activeSession.status          = 'completed';
-                    activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
-                    activeSession.feeAmount       = activeSession.isVisitor ? 10000 : 0;
-                    activeSession.paymentStatus   = 'paid';
-                    if (lastOut.plate) {
-                        activeSession.licensePlate = lastOut.plate; // Cập nhật biển số thực tế lúc ra
+            const lastIn = scanJson.data?.in;
+
+            // 1. Trường hợp mở cổng RA thủ công
+            if (activeGate === 'out' || (!activeGate && lastOut?.rfid)) {
+                const gateSess = sessions.out;
+                const rfidVal = String(gateSess.rfid || lastOut?.rfid || '').trim().toUpperCase();
+                plate = gateSess.plate || lastOut?.plate || '';
+
+                if (rfidVal) {
+                    const activeSession = await ParkingSession.findOne({
+                        rfid: rfidVal,
+                        status: 'in_progress'
+                    });
+                    if (activeSession) {
+                        activeSession.exitAt          = new Date();
+                        activeSession.exitMethod      = 'manual';
+                        activeSession.status          = 'completed';
+                        activeSession.durationMinutes = Math.round((activeSession.exitAt - activeSession.entryAt) / 60000);
+                        activeSession.feeAmount       = activeSession.isVisitor ? 10000 : 0;
+                        activeSession.paymentStatus   = 'paid';
+                        if (plate) {
+                            activeSession.licensePlate = plate;
+                        }
+                        await activeSession.save();
+                        console.log(`[Gate Control] Đã hoàn thành session ${activeSession.sessionCode} (Exit) thủ công.`);
                     }
-                    await activeSession.save();
-                    console.log(`[Gate Control] Đã tự động hoàn thành session ${activeSession.sessionCode} cho thẻ ${cardID} khi mở thủ công.`);
                 }
+                
+                // Reset in-memory session của cổng ra về idle
+                if (gateSess.timer) clearTimeout(gateSess.timer);
+                sessions.out.status = 'done';
+            }
+            // 2. Trường hợp mở cổng VÀO thủ công
+            else if (activeGate === 'in' || (!activeGate && lastIn?.rfid)) {
+                const gateSess = sessions.in;
+                const rfidVal = String(gateSess.rfid || lastIn?.rfid || '').trim().toUpperCase();
+                plate = gateSess.plate || lastIn?.plate || 'MANUAL';
+
+                // Đăng ký lượt xe vào thủ công để lúc ra có dữ liệu đối chiếu
+                const sessionCode = `PS-IN-MANUAL-${Date.now()}`;
+                await ParkingSession.create({
+                    sessionCode,
+                    licensePlate: plate.toUpperCase(),
+                    vehicleType:  'car',
+                    entryAt:      new Date(),
+                    entryMethod:  'manual',
+                    isVisitor:    true,
+                    status:       'in_progress',
+                    rfid:         rfidVal || null,
+                    notes:        `Bảo vệ mở thủ công | RFID: ${rfidVal || 'Không có'}`,
+                });
+                console.log(`[Gate Control] Đã tạo session vào thủ công ${sessionCode} thành công.`);
+
+                // Reset in-memory session của cổng vào về idle
+                if (gateSess.timer) clearTimeout(gateSess.timer);
+                sessions.in.status = 'done';
+            } else {
+                plate = lastOut?.plate || lastIn?.plate || '';
             }
         } catch (sessionErr) {
             console.error('[Gate Control] Lỗi khi tự động hoàn thành session khi mở thủ công:', sessionErr.message);
         }
+
+        const plateSuffix = plate ? `:${plate}` : '';
+        client.publish('parking/commands/gate', `OPEN${plateSuffix}`);
+        console.log(`[Gate Control] Bảo vệ mở barrier thủ công! (Biển số gửi đi: ${plate || 'Không có'})`);
+
+        // Dọn dẹp AI scan kết quả trên AI server sau khi đã giải quyết xong
+        try {
+            const AI_SERVER_URL = process.env.AI_SERVER_URL || 'http://localhost:8000';
+            await fetch(`${AI_SERVER_URL}/api/clear-scan`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ gate: activeGate || 'all' })
+            });
+        } catch (_) {}
 
         return res.json({
             status: 'success',
@@ -85,7 +150,7 @@ export async function closeBarrier(req, res) {
     }
 }
 
-// Reprocess card swipe
+// Reprocess card swipe (manual override by guard)
 export async function reprocessSwipe(req, res) {
     try {
         const { gate, rfid } = req.body
@@ -109,4 +174,60 @@ export async function reprocessSwipe(req, res) {
             message: error.message,
         })
     }
+}
+
+/**
+ * POST /api/gate/plate-ready
+ * Được AI server gọi khi livestream nhận diện được biển số.
+ * Thay thế /api/gate/reprocess để tách biệt OCR khỏi business logic.
+ * Body: { gate, plate, image_b64?, apriltag? }
+ */
+export async function plateReady(req, res) {
+    try {
+        const { gate, plate, image_b64, apriltag } = req.body
+
+        if (!gate || !plate) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Thiếu gate hoặc plate.',
+            })
+        }
+        if (!['in', 'out'].includes(gate)) {
+            return res.status(400).json({
+                status: 'error',
+                message: "gate phải là 'in' hoặc 'out'.",
+            })
+        }
+
+        addPlateToSession(gate, plate, image_b64 || null, apriltag ?? null)
+
+        return res.json({
+            status:  'success',
+            message: `Plate '${plate}' received for gate '${gate}'`,
+        })
+    } catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            message: error.message,
+        })
+    }
+}
+
+/**
+ * GET /api/gate/sessions (debug)
+ * Trả về trạng thái hiện tại của 2 session (in/out).
+ */
+export async function getSessionsStatus(req, res) {
+    const sess = getSessions()
+    // Không trả về image_b64 vì quá lớn
+    const sanitized = {}
+    for (const gate of ['in', 'out']) {
+        const { image_b64, timer, ...rest } = sess[gate]
+        sanitized[gate] = {
+            ...rest,
+            hasImage: !!image_b64,
+            hasTimer: !!timer,
+        }
+    }
+    return res.json({ status: 'success', data: sanitized })
 }

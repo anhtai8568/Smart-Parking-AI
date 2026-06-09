@@ -6,21 +6,56 @@ const AI_URL = 'http://localhost:8000'
 
 const EMPTY_SCAN = { plate: null, apriltag: null, image_b64: null, timestamp: null, rfid: null }
 
+/**
+ * Parse warning string từ Node.js backend thành object có cấu trúc.
+ * Các format:
+ *   "Lệch biển số lúc ra! Vào: 30A12345, Ra: Không đọc được"
+ *   "Lệch biển số xe tháng! Đăng ký: 30A12345, AI đọc: 30B12345"
+ *   Các trường hợp khác → chỉ trả về raw message
+ */
+function parseWarning(warning) {
+  if (!warning) return null
+  // Case 1: Lệch biển số lúc vào/ra (xe vãng lai)
+  let m = warning.match(/Vào:\s*([^,]+),\s*Ra:\s*(.+)$/i)
+  if (m) return { type: 'mismatch_visitor', plateIn: m[1].trim(), plateOut: m[2].trim() }
+  // Case 2: Xe tháng lệch biển
+  m = warning.match(/Đăng\s*ký:\s*([^,]+),\s*AI\s*đọc:\s*(.+)$/i)
+  if (m) return { type: 'mismatch_monthly', registered: m[1].trim(), scanned: m[2].trim() }
+  return { type: 'info' }
+}
+
+// AudioContext dùng chung – tạo 1 lần duy nhất sau user gesture, tránh bị trình duyệt chặn
+let _audioCtx = null
+function getAudioCtx() {
+  if (!_audioCtx) {
+    _audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+  }
+  return _audioCtx
+}
+
 // Phát tiếng beep cảnh báo qua Web Audio API
 function playAlertBeep() {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)()
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.type = 'square'
-    osc.frequency.setValueAtTime(880, ctx.currentTime)
-    osc.frequency.setValueAtTime(660, ctx.currentTime + 0.15)
-    gain.gain.setValueAtTime(0.3, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4)
-    osc.start(ctx.currentTime)
-    osc.stop(ctx.currentTime + 0.4)
+    const ctx = getAudioCtx()
+    // Resume context nếu bị suspend (policy của trình duyệt)
+    const doPlay = () => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.type = 'square'
+      osc.frequency.setValueAtTime(880, ctx.currentTime)
+      osc.frequency.setValueAtTime(660, ctx.currentTime + 0.15)
+      gain.gain.setValueAtTime(0.3, ctx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4)
+      osc.start(ctx.currentTime)
+      osc.stop(ctx.currentTime + 0.4)
+    }
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(doPlay).catch(() => {})
+    } else {
+      doPlay()
+    }
   } catch (_) {}
 }
 
@@ -225,6 +260,157 @@ function DashboardGuard() {
     )
   }
 
+  // ── GateInfoBlock: hiển thị thông tin cổng + panel đối chiếu biển khi có lệch ──
+  const GateInfoBlock = ({ scan, direction }) => {
+    const isIn    = direction === 'in'
+    const label   = isIn ? '📥 CỔNG VÀO' : '📤 CỔNG RA'
+    const clr     = isIn ? '#1d4ed8' : '#047857'
+    const rfidClr = isIn ? '#1d4ed8' : '#047857'
+    const timeLabel = isIn ? 'Giờ vào' : 'Giờ ra'
+    const rfidLabel = isIn ? 'Mã thẻ RFID vào' : 'Mã thẻ RFID ra'
+    const plateLabel = isIn ? 'Biển số vào' : 'Biển số ra'
+
+    const statusColor = scan.warning ? '#dc2626' : (scan.plate ? '#16a34a' : '#94a3b8')
+    const statusText  = scan.warning ? 'LỖI' : (scan.plate ? 'ĐÃ NHẬN DIỆN' : 'CHỜ XE')
+
+    const parsed = parseWarning(scan.warning)
+
+    return (
+      <div className="gate-info-section" style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '12px', marginBottom: '12px' }}>
+        {/* Header */}
+        <div style={{ fontWeight: 700, color: clr, marginBottom: '8px', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>{label}</span>
+          <span style={{ fontSize: '11px', fontWeight: 600, color: statusColor }}>{statusText}</span>
+        </div>
+
+        {/* Info rows */}
+        <div className="info-row">
+          <span>{rfidLabel}</span>
+          <strong style={{ color: scan.rfid ? rfidClr : '#64748b', fontFamily: 'monospace', fontSize: '13px' }}>
+            {scan.rfid || '—'}
+          </strong>
+        </div>
+
+        <div className="info-row">
+          <span>{plateLabel}</span>
+          <strong style={{ color: scan.plate ? '#0f172a' : '#64748b', fontFamily: 'monospace', fontSize: '13px', letterSpacing: '0.5px' }}>
+            {scan.plate || '—'}
+          </strong>
+        </div>
+
+        {scan.apriltag != null && (
+          <div className="info-row">
+            <span>AprilTag ID</span>
+            <strong>#{scan.apriltag}</strong>
+          </div>
+        )}
+
+        <div className="info-row">
+          <span>{timeLabel}</span>
+          <strong>{scan.timestamp || '—'}</strong>
+        </div>
+
+        {/* ── PANEL ĐỐI CHIẾU BIỂN SỐ (chỉ hiện khi có lệch biển) ── */}
+        {parsed && parsed.type === 'mismatch_visitor' && (
+          <div style={{
+            marginTop: '10px', borderRadius: '10px', overflow: 'hidden',
+            border: '2px solid #fbbf24', background: '#fffbeb',
+            animation: 'fadeInUp 0.3s ease'
+          }}>
+            <div style={{ padding: '6px 12px', background: '#f59e0b', color: '#fff', fontWeight: 700, fontSize: '11px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              🔍 ĐỐI CHIẾU BIỂN SỐ — BẢO VỆ KIỂM TRA
+            </div>
+            <div style={{ padding: '10px 12px', display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '8px', alignItems: 'center' }}>
+              {/* Biển lúc vào */}
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Lúc vào (DB)</div>
+                <div style={{
+                  padding: '6px 10px', borderRadius: '8px',
+                  background: '#f0fdf4', border: '2px solid #86efac',
+                  fontFamily: 'monospace', fontWeight: 800, fontSize: '14px',
+                  color: '#15803d', letterSpacing: '1px'
+                }}>
+                  {parsed.plateIn}
+                </div>
+              </div>
+              {/* Mũi tên */}
+              <div style={{ fontSize: '18px', color: '#94a3b8', fontWeight: 700 }}>⟷</div>
+              {/* Biển lúc ra */}
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Lúc ra (AI)</div>
+                <div style={{
+                  padding: '6px 10px', borderRadius: '8px',
+                  background: parsed.plateOut === 'Không đọc được' ? '#f8fafc' : '#fef2f2',
+                  border: `2px solid ${parsed.plateOut === 'Không đọc được' ? '#cbd5e1' : '#fca5a5'}`,
+                  fontFamily: 'monospace', fontWeight: 800, fontSize: '14px',
+                  color: parsed.plateOut === 'Không đọc được' ? '#94a3b8' : '#b91c1c',
+                  letterSpacing: '1px'
+                }}>
+                  {parsed.plateOut}
+                </div>
+              </div>
+            </div>
+            <div style={{ padding: '6px 12px', background: '#fef9c3', fontSize: '11px', color: '#92400e', fontWeight: 600, borderTop: '1px solid #fde68a' }}>
+              💡 Nếu AI nhầm 1–2 ký tự, bảo vệ có thể xác nhận và mở cổng thủ công.
+            </div>
+          </div>
+        )}
+
+        {parsed && parsed.type === 'mismatch_monthly' && (
+          <div style={{
+            marginTop: '10px', borderRadius: '10px', overflow: 'hidden',
+            border: '2px solid #fbbf24', background: '#fffbeb',
+            animation: 'fadeInUp 0.3s ease'
+          }}>
+            <div style={{ padding: '6px 12px', background: '#f59e0b', color: '#fff', fontWeight: 700, fontSize: '11px' }}>
+              🔍 ĐỐI CHIẾU BIỂN SỐ XE THÁNG — BẢO VỆ KIỂM TRA
+            </div>
+            <div style={{ padding: '10px 12px', display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '8px', alignItems: 'center' }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Đăng ký (DB)</div>
+                <div style={{
+                  padding: '6px 10px', borderRadius: '8px',
+                  background: '#f0fdf4', border: '2px solid #86efac',
+                  fontFamily: 'monospace', fontWeight: 800, fontSize: '14px',
+                  color: '#15803d', letterSpacing: '1px'
+                }}>
+                  {parsed.registered}
+                </div>
+              </div>
+              <div style={{ fontSize: '18px', color: '#94a3b8', fontWeight: 700 }}>⟷</div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>AI đọc được</div>
+                <div style={{
+                  padding: '6px 10px', borderRadius: '8px',
+                  background: '#fef2f2', border: '2px solid #fca5a5',
+                  fontFamily: 'monospace', fontWeight: 800, fontSize: '14px',
+                  color: '#b91c1c', letterSpacing: '1px'
+                }}>
+                  {parsed.scanned}
+                </div>
+              </div>
+            </div>
+            <div style={{ padding: '6px 12px', background: '#fef9c3', fontSize: '11px', color: '#92400e', fontWeight: 600, borderTop: '1px solid #fde68a' }}>
+              💡 Nếu AI nhầm 1–2 ký tự, bảo vệ có thể xác nhận và mở cổng thủ công.
+            </div>
+          </div>
+        )}
+
+        {/* Raw warning cho các trường hợp khác */}
+        {scan.warning && parsed && parsed.type === 'info' && (
+          <div style={{
+            marginTop: '8px', padding: '6px 10px', borderRadius: '8px',
+            background: '#fef2f2', border: '1px solid #f87171',
+            color: '#dc2626', fontWeight: 600, fontSize: '11px',
+            animation: 'fadeInUp 0.3s ease'
+          }}>
+            ⚠️ {scan.warning}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div>
       <div className="lane-split single-gate">
@@ -288,99 +474,18 @@ function DashboardGuard() {
               </div>
 
               <div className="card-info">
-                {scanIn.warning && (
-                  <div style={{
-                    padding: '6px 10px', borderRadius: '8px',
-                    background: '#fef2f2', border: '1px solid #f87171',
-                    color: '#dc2626', fontWeight: 600, fontSize: '12px',
-                    textAlign: 'center', marginBottom: '8px', animation: 'fadeInUp 0.3s ease'
-                  }}>
-                    ⚠️ Cổng vào: {scanIn.warning}
-                  </div>
-                )}
-
-                {scanOut.warning && (
-                  <div style={{
-                    padding: '6px 10px', borderRadius: '8px',
-                    background: '#fef2f2', border: '1px solid #f87171',
-                    color: '#dc2626', fontWeight: 600, fontSize: '12px',
-                    textAlign: 'center', marginBottom: '8px', animation: 'fadeInUp 0.3s ease'
-                  }}>
-                    ⚠️ Cổng ra: {scanOut.warning}
-                  </div>
-                )}
 
                 {/* CỔNG VÀO SECTION */}
-                <div className="gate-info-section" style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '12px', marginBottom: '12px' }}>
-                  <div style={{ fontWeight: 700, color: '#1d4ed8', marginBottom: '8px', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>📥 CỔNG VÀO</span>
-                    <span style={{ fontSize: '11px', fontWeight: 600, color: scanIn.warning ? '#dc2626' : (scanIn.plate ? '#16a34a' : '#94a3b8') }}>
-                      {scanIn.warning ? 'LỖI' : (scanIn.plate ? 'ĐÃ NHẬN DIỆN' : 'CHỜ XE')}
-                    </span>
-                  </div>
-                  
-                  <div className="info-row">
-                    <span>Mã thẻ RFID vào</span>
-                    <strong style={{ color: scanIn.rfid ? '#1d4ed8' : '#64748b' }}>
-                      {scanIn.rfid || '—'}
-                    </strong>
-                  </div>
-
-                  <div className="info-row">
-                    <span>Biển số vào</span>
-                    <strong style={{ color: scanIn.plate ? '#0f172a' : '#64748b' }}>
-                      {scanIn.plate || '—'}
-                    </strong>
-                  </div>
-
-                  {scanIn.apriltag != null && (
-                    <div className="info-row">
-                      <span>AprilTag ID</span>
-                      <strong>#{scanIn.apriltag}</strong>
-                    </div>
-                  )}
-
-                  <div className="info-row">
-                    <span>Giờ vào</span>
-                    <strong>{scanIn.timestamp || '—'}</strong>
-                  </div>
-                </div>
+                <GateInfoBlock
+                  scan={scanIn}
+                  direction="in"
+                />
 
                 {/* CỔNG RA SECTION */}
-                <div className="gate-info-section" style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '12px', marginBottom: '12px' }}>
-                  <div style={{ fontWeight: 700, color: '#047857', marginBottom: '8px', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>📤 CỔNG RA</span>
-                    <span style={{ fontSize: '11px', fontWeight: 600, color: scanOut.warning ? '#dc2626' : (scanOut.plate ? '#16a34a' : '#94a3b8') }}>
-                      {scanOut.warning ? 'LỖI' : (scanOut.plate ? 'ĐÃ NHẬN DIỆN' : 'CHỜ XE')}
-                    </span>
-                  </div>
-
-                  <div className="info-row">
-                    <span>Mã thẻ RFID ra</span>
-                    <strong style={{ color: scanOut.rfid ? '#047857' : '#64748b' }}>
-                      {scanOut.rfid || '—'}
-                    </strong>
-                  </div>
-
-                  <div className="info-row">
-                    <span>Biển số ra</span>
-                    <strong style={{ color: scanOut.plate ? '#0f172a' : '#64748b' }}>
-                      {scanOut.plate || '—'}
-                    </strong>
-                  </div>
-
-                  {scanOut.apriltag != null && (
-                    <div className="info-row">
-                      <span>AprilTag ID</span>
-                      <strong>#{scanOut.apriltag}</strong>
-                    </div>
-                  )}
-
-                  <div className="info-row">
-                    <span>Giờ ra</span>
-                    <strong>{scanOut.timestamp || '—'}</strong>
-                  </div>
-                </div>
+                <GateInfoBlock
+                  scan={scanOut}
+                  direction="out"
+                />
 
                 {/* ── Điều khiển barrier ── */}
                 <div className="barrier-control-panel">

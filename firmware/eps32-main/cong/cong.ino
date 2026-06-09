@@ -267,8 +267,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   LOG("[MQTT IN] Topic: "); LOG(topic); LOG(" | Payload: "); LOGLN(msg);
 
   if (String(topic) == "parking/commands/gate") {
-    if (msg == "OPEN") {
+    if (msg.startsWith("OPEN")) {
       LOGLN("[MQTT COMMAND] Nhan lenh MO cong!");
+      int colonIdx = msg.indexOf(':');
+      if (colonIdx != -1) {
+        String plate = msg.substring(colonIdx + 1);
+        LOG("[MQTT COMMAND] BIEN SO XE: "); LOGLN(plate);
+      } else {
+        LOGLN("[MQTT COMMAND] Khong co thong tin bien so xe.");
+      }
       openBarrier();
     }
     else if (msg == "CLOSE") {

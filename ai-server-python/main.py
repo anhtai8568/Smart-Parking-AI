@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Request, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import cv2
@@ -6,6 +6,8 @@ import numpy as np
 import uvicorn
 import base64
 import time
+import atexit
+import copy
 
 # Import 2 module bạn vừa tạo
 from utils.detect_license import PlateDetector
@@ -32,31 +34,49 @@ print("[OK] He thong da san sang!")
 
 import urllib.request
 import json
+import threading
 
-def trigger_backend_validation(gate, rfid):
+# Lock đồng bộ hóa dữ liệu cache last_scan
+scan_lock = threading.Lock()
+
+def notify_plate_ready(gate, plate, image_b64, apriltag=None):
+    """
+    Thông báo cho Node.js biết đã nhận diện được biển số cho cổng này.
+    AI server không cần biết RFID - chỉ đẩy plate lên session manager của Node.js.
+    """
     try:
-        url = "http://localhost:4000/api/gate/reprocess"
-        data = json.dumps({"gate": gate, "rfid": rfid}).encode('utf-8')
+        url = "http://localhost:4000/api/gate/plate-ready"
+        payload = {"gate": gate, "plate": plate, "image_b64": image_b64}
+        if apriltag is not None:
+            payload["apriltag"] = apriltag
+        data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(
-            url, 
-            data=data, 
+            url,
+            data=data,
             headers={'Content-Type': 'application/json'},
             method='POST'
         )
         with urllib.request.urlopen(req, timeout=2.0) as response:
             response.read()
-            print(f"[trigger_backend_validation] Reprocessed card {rfid} for gate {gate} successfully.")
+            print(f"[notify_plate_ready] gate={gate} plate={plate} -> Node.js OK")
     except Exception as e:
-        print(f"[trigger_backend_validation] Error: {e}")
+        print(f"[notify_plate_ready] Error: {e}")
 
-import threading
-
-# Khởi tạo camera mặc định (0 = webcam laptop)
+# Khởi hoạt camera mặc định (0 = webcam laptop)
 camera = cv2.VideoCapture(0)
 camera_lock = threading.Lock()
 
+# Giải phóng camera khi server tắt
+@atexit.register
+def cleanup_camera():
+    global camera
+    with camera_lock:
+        if camera.isOpened():
+            camera.release()
+            print("[cleanup] Camera has been released successfully.")
+
 # Throttle nhận diện để đỡ nặng (mỗi N frame xử lý 1 lần)
-FRAME_SKIP = 6
+FRAME_SKIP = 3
 frame_count = 0
 last_plate_text = ""
 
@@ -72,21 +92,36 @@ last_scan = {
     "out": {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None},
 }
 
+# Cấu trúc lưu trữ biển số nhận diện từ livestream độc lập theo từng cổng
+livestream_cache = {
+    "in":  {"text": None, "b64": None, "timestamp": 0},
+    "out": {"text": None, "b64": None, "timestamp": 0},
+}
+
 # Theo dõi cổng nào đang hoạt động để tránh ghi đè nhận diện lên cả hai cổng
 active_gate = "in"
 
 def generate_frames():
-    global frame_count, last_plate_text
-    global current_plate_text, current_plate_b64, plate_lost_counter, active_gate
+    global frame_count, last_plate_text, livestream_cache
+    global plate_lost_counter, active_gate, camera
 
-    last_bboxes = []
-    last_ocr_time = 0
+    current_plate_text = None
+    current_plate_b64  = None
+
+    last_bboxes    = []
+    last_ocr_time  = 0
+    plate_notified = False   # True khi đã notify Node.js cho biển số hiện tại, reset khi biển mất
 
     while True:
         with camera_lock:
+            if not camera.isOpened():
+                print("[camera] Camera is not opened. Attempting to reopen...")
+                camera.release()
+                camera = cv2.VideoCapture(0)
             success, frame = camera.read()
         if not success:
-            time.sleep(0.03)
+            print("[camera] Failed to read frame. Sleeping 1.0s...")
+            time.sleep(1.0)
             continue
 
         frame_count += 1
@@ -102,35 +137,48 @@ def generate_frames():
                     now_time = time.time()
                     if current_plate_text is None and (now_time - last_ocr_time > 1.0):
                         last_ocr_time = now_time
-                        plate_img = plates[0]["image"]
+                        plate_img  = plates[0]["image"]
                         plate_text = recognizer.process_plate(plate_img)
                         if plate_text:
                             current_plate_text = plate_text
-                            last_plate_text = plate_text
-                            print(f"[YOLO Stage 2] Nhan dien va dich bien so tu dong: '{plate_text}'")
+                            last_plate_text    = plate_text
+                            plate_notified     = False   # Reset để cho phép notify với biển mới này
+                            print(f"[YOLO Stage 2] Nhan dien bien so: '{plate_text}'")
                             
                             # Encode ảnh biển số sang base64
                             _, buf = cv2.imencode(".jpg", plate_img)
                             current_plate_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
                             
-                            # Tự động hiển thị trên khung biển số của web ngay lập tức cho cổng đang hoạt động
+                            # Cập nhật last_scan cho dashboard bảo vệ
                             gate = active_gate
                             if gate in ["in", "out"]:
-                                last_scan[gate]["plate"] = current_plate_text
-                                last_scan[gate]["image_b64"] = current_plate_b64
-                                last_scan[gate]["timestamp"] = time.strftime("%H:%M %d/%m/%Y")
-                                last_scan[gate]["warning"] = None  # Xóa cảnh báo cũ vì đã có biển số
+                                now_ts = time.time()
+                                livestream_cache[gate]["text"] = plate_text
+                                livestream_cache[gate]["b64"] = current_plate_b64
+                                livestream_cache[gate]["timestamp"] = now_ts
+
+                                with scan_lock:
+                                    last_scan[gate]["plate"]     = plate_text
+                                    last_scan[gate]["image_b64"] = current_plate_b64
+                                    last_scan[gate]["timestamp"] = time.strftime("%H:%M %d/%m/%Y")
+                                    last_scan[gate]["warning"]   = None
                                 
-                                # Nếu đã có rfid trong cache (quẹt thẻ trước khi nhận diện được biển số), tự động gọi backend reprocess
-                                rfid = last_scan[gate].get("rfid")
-                                if rfid:
-                                    threading.Thread(target=trigger_backend_validation, args=(gate, rfid)).start()
+                                # Notify Node.js session manager (chỉ 1 lần đầu cho mỗi biển số)
+                                if not plate_notified:
+                                    plate_notified = True
+                                    print(f"[livestream] Notify Node.js: gate={gate}, plate={plate_text}")
+                                    threading.Thread(
+                                        target=notify_plate_ready,
+                                        args=(gate, plate_text, current_plate_b64, None),
+                                        daemon=True
+                                    ).start()
                 else:
                     last_bboxes = []
                     plate_lost_counter += 1
-                    if plate_lost_counter > 15:  # Không thấy biển trong ~15 lần check (~3 giây)
+                    if plate_lost_counter > 45:  # ~9 giây không thấy biển mới xóa cache
                         current_plate_text = None
-                        current_plate_b64 = None
+                        current_plate_b64  = None
+                        plate_notified     = False   # Reset để lần phát hiện tiếp sẽ notify lại
             except Exception as e:
                 print(f"[generate_frames] Error: {e}")
 
@@ -160,10 +208,14 @@ def generate_frames():
             continue
 
         frame_bytes = buffer.tobytes()
-        yield (
-            b"--frame\r\n"
-            b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
-        )
+        try:
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+            )
+        except GeneratorExit:
+            print("[stream] Client disconnected from video stream.")
+            break
 
 @app.get("/api/video-stream")
 def video_stream():
@@ -243,7 +295,7 @@ async def capture_and_scan(gate: str = "in"):
     Chụp frame hiện tại từ webcam, nhận diện biển số xe và AprilTag.
     Gọi khi cảm biến siêu âm kích hoạt (gate='in' hoặc gate='out').
     """
-    global current_plate_text, current_plate_b64, active_gate
+    global active_gate, camera, livestream_cache
     
     if gate in ("in", "out"):
         active_gate = gate
@@ -251,38 +303,36 @@ async def capture_and_scan(gate: str = "in"):
     if gate not in ("in", "out"):
         return {"status": "error", "message": "gate phải là 'in' hoặc 'out'"}
 
-    existing_rfid = last_scan[gate].get("rfid")
+    existing_rfid = None
+    prev_plate    = None   # <<< Lưu biển số cũ làm fallback nếu scan mới thất bại
+    prev_image_b64 = None
+    with scan_lock:
+        existing_rfid  = last_scan[gate].get("rfid")
+        prev_plate     = last_scan[gate].get("plate")      # <<< giữ lại
+        prev_image_b64 = last_scan[gate].get("image_b64")  # <<< giữ lại
+        
+        # Reset cache của cổng hiện tại để đón nhận diện mới (tránh kẹt hình ảnh/biển số của giao dịch trước)
+        last_scan[gate] = {
+            "plate":     None,
+            "apriltag":  None,
+            "image_b64": None,
+            "timestamp": time.strftime("%H:%M %d/%m/%Y"),
+            "warning":   None,
+            "rfid":      existing_rfid,
+        }
 
-    # Xóa cache của cổng đối diện vì xe đang ở cổng này
-    other_gate = "out" if gate == "in" else "in"
-    last_scan[other_gate] = {
-        "plate": None,
-        "apriltag": None,
-        "image_b64": None,
-        "timestamp": None,
-        "warning": None,
-        "rfid": None,
-    }
-
-    # Reset cache của cổng hiện tại để đón nhận diện mới (tránh kẹt hình ảnh/biển số của giao dịch trước)
-    last_scan[gate] = {
-        "plate": None,
-        "apriltag": None,
-        "image_b64": None,
-        "timestamp": time.strftime("%H:%M %d/%m/%Y"),
-        "warning": None,
-        "rfid": existing_rfid,
-    }
-
-    # 1. Nếu livestream đang nhìn thấy biển số trực tiếp, sử dụng luôn để phản hồi nhanh
-    if current_plate_text is not None:
-        print(f"[capture-and-scan] Tai su dung bien so tu dong nhan dien tu livestream: {current_plate_text}")
-        last_scan[gate]["plate"] = current_plate_text
-        last_scan[gate]["image_b64"] = current_plate_b64
+    # 1. Nếu livestream đang nhìn thấy biển số trực tiếp cho cổng này và còn mới (< 3.0s), sử dụng luôn
+    now_ts = time.time()
+    cached = livestream_cache.get(gate)
+    if cached and cached["text"] is not None and (now_ts - cached["timestamp"] < 3.0):
+        print(f"[capture-and-scan] Tai su dung bien so tu dong nhan dien tu livestream cho gate={gate}: {cached['text']}")
         
         # Quét nhanh AprilTag từ camera hiện tại phòng trường hợp là xe tháng ô tô
         apriltag_id = None
         with camera_lock:
+            if not camera.isOpened():
+                camera.release()
+                camera = cv2.VideoCapture(0)
             success, frame = camera.read()
         if success:
             try:
@@ -293,14 +343,20 @@ async def capture_and_scan(gate: str = "in"):
                 corners, ids, _ = detector_ar.detectMarkers(gray)
                 if ids is not None and len(ids) > 0:
                     apriltag_id = int(ids[0][0])
-                    last_scan[gate]["apriltag"] = apriltag_id
             except Exception:
                 pass
+                
+        with scan_lock:
+            last_scan[gate]["plate"] = cached["text"]
+            last_scan[gate]["image_b64"] = cached["b64"]
+            if apriltag_id is not None:
+                last_scan[gate]["apriltag"] = apriltag_id
+            res_data = copy.deepcopy(last_scan[gate])
                 
         return {
             "status": "success",
             "gate": gate,
-            "data": last_scan[gate],
+            "data": res_data,
         }
 
     # 2. Nếu chưa có biển số, tiến hành chụp và nhận dạng nhanh (chỉ thử 1 frame duy nhất, không sleep, không loop)
@@ -311,6 +367,9 @@ async def capture_and_scan(gate: str = "in"):
     best_frame  = None
 
     with camera_lock:
+        if not camera.isOpened():
+            camera.release()
+            camera = cv2.VideoCapture(0)
         success, frame = camera.read()
     if success:
         best_frame = frame
@@ -348,6 +407,12 @@ async def capture_and_scan(gate: str = "in"):
         _, frame_buf = cv2.imencode(".jpg", best_frame)
         frame_b64 = "data:image/jpeg;base64," + base64.b64encode(frame_buf.tobytes()).decode()
 
+    # ✔ Nếu scan 1-frame không ra biển số → dùng lại biển số mà livestream đã nhận diện trước đó
+    if plate_text is None and prev_plate is not None:
+        plate_text = prev_plate
+        plate_b64  = prev_image_b64 or plate_b64 or frame_b64
+        print(f"[capture-and-scan] Single frame that bai -> phuc hoi bien so cu tu livestream: '{plate_text}'")
+    
     result = {
         "plate":      plate_text,
         "apriltag":   apriltag_id,
@@ -356,12 +421,15 @@ async def capture_and_scan(gate: str = "in"):
         "warning":    None,
         "rfid":       existing_rfid,
     }
-    last_scan[gate] = result
+    
+    with scan_lock:
+        last_scan[gate] = result
+        res_data = copy.deepcopy(last_scan[gate])
 
     return {
         "status": "success",
         "gate": gate,
-        "data": result,
+        "data": res_data,
     }
 
 @app.post("/api/clear-scan")
@@ -369,17 +437,20 @@ async def clear_scan(payload: dict = None):
     """
     Reset kết quả quét của cổng (in/out/all) về giá trị trống.
     """
-    global current_plate_text, current_plate_b64, active_gate
-    current_plate_text = None
-    current_plate_b64 = None
+    global active_gate, livestream_cache
     active_gate = "in"  # Reset về cổng vào mặc định
     
     gate = payload.get("gate") if payload else None
-    if gate in last_scan:
-        last_scan[gate] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None}
-    else:
-        last_scan["in"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None}
-        last_scan["out"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None}
+    with scan_lock:
+        if gate in last_scan:
+            last_scan[gate] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None}
+            if gate in livestream_cache:
+                livestream_cache[gate] = {"text": None, "b64": None, "timestamp": 0}
+        else:
+            last_scan["in"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None}
+            last_scan["out"] = {"plate": None, "apriltag": None, "image_b64": None, "timestamp": None, "warning": None, "rfid": None}
+            livestream_cache["in"] = {"text": None, "b64": None, "timestamp": 0}
+            livestream_cache["out"] = {"text": None, "b64": None, "timestamp": 0}
     return {"status": "success", "message": "Đã reset kết quả quét."}
 
 
@@ -389,18 +460,31 @@ async def get_latest_scan():
     Trả về kết quả nhận diện mới nhất của cả 2 cổng.
     Frontend poll endpoint này mỗi ~2 giây để cập nhật dashboard.
     """
+    with scan_lock:
+        data_copy = copy.deepcopy(last_scan)
     return {
         "status": "success",
-        "data":   last_scan,
+        "data":   data_copy,
     }
 
 
 @app.post("/api/update-scan-warning")
-async def update_scan_warning(payload: dict):
+async def update_scan_warning(payload: dict, request: Request):
     """
     Cập nhật cảnh báo nhận diện/mismatch hoặc thông tin rfid từ Node.js backend.
     Hỗ trợ thêm giả lập biển số xe và hình ảnh để kiểm thử.
     """
+    # Bảo mật: Chỉ cho phép localhost hoặc dải IP của Docker
+    client_ip = request.client.host
+    is_allowed = (
+        client_ip in ("127.0.0.1", "localhost", "::1") or
+        client_ip.startswith("172.") or
+        client_ip.startswith("10.") or
+        client_ip.startswith("192.168.")
+    )
+    if not is_allowed:
+        raise HTTPException(status_code=403, detail="Access denied. Local or Docker network only.")
+
     gate = payload.get("gate", "in")
     warning = payload.get("warning", None)
     rfid = payload.get("rfid", None)
@@ -408,17 +492,21 @@ async def update_scan_warning(payload: dict):
     image_b64 = payload.get("image_b64", None)
     timestamp = payload.get("timestamp", None)
     
-    if gate in last_scan:
-        if warning is not None or "warning" in payload:
-            last_scan[gate]["warning"] = warning
-        if rfid is not None or "rfid" in payload:
-            last_scan[gate]["rfid"] = rfid
-        if plate is not None or "plate" in payload:
-            last_scan[gate]["plate"] = plate
-        if image_b64 is not None or "image_b64" in payload:
-            last_scan[gate]["image_b64"] = image_b64
-        if timestamp is not None or "timestamp" in payload:
-            last_scan[gate]["timestamp"] = timestamp
+    with scan_lock:
+        if gate in last_scan:
+            if warning is not None or "warning" in payload:
+                last_scan[gate]["warning"] = warning
+            if rfid is not None or "rfid" in payload:
+                last_scan[gate]["rfid"] = rfid
+            if plate is not None:  # Không cho phép ghi đè None/null lên kết quả đã nhận diện của AI
+                last_scan[gate]["plate"] = plate
+            if image_b64 is not None:  # Không cho phép ghi đè None/null
+                last_scan[gate]["image_b64"] = image_b64
+            if timestamp is not None or "timestamp" in payload:
+                last_scan[gate]["timestamp"] = timestamp
+            
+            # Print log ra để debug chính xác dòng chạy
+            print(f"[update_scan_warning] Cổng {gate} -> RFID: {last_scan[gate]['rfid']}, BIỂN SỐ: {last_scan[gate]['plate']}, CẢNH BÁO: {last_scan[gate]['warning']}")
             
     return {"status": "success", "message": "Cập nhật cảnh báo thành công"}
 
